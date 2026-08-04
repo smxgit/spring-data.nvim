@@ -81,16 +81,6 @@ function M.truthy(value, message)
   end
 end
 
-function M.raises(fn, pattern)
-  local ok, err = pcall(fn)
-  if ok then
-    error("aucune erreur levée, attendait : " .. tostring(pattern), 2)
-  end
-  if pattern and not tostring(err):find(pattern, 1, true) then
-    error("erreur inattendue : " .. tostring(err) .. "\nattendait : " .. pattern, 2)
-  end
-end
-
 function M.report()
   for _, f in ipairs(failures) do
     io.write("ÉCHEC  ", f.label, "\n", f.err, "\n\n")

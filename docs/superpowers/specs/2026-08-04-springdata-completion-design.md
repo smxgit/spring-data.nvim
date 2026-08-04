@@ -221,8 +221,9 @@ parser.parse(source, fields) -> result
 ```
 
 - `source` : chaîne partielle, p. ex. `"findByNameAndAge"`.
-- `fields` : liste de `{ name, java_type, category, annotations }`. Peut être vide —
-  le parser dégrade alors la validation sans échouer.
+- `fields` : liste de `{ name, java_type, annotations }`. Peut être vide — le parser
+  dégrade alors la validation sans échouer. La catégorie n'est pas stockée : elle se
+  déduit du type Java par `parser.categorize`, seule source de vérité du classement.
 
 Pipeline, calqué sur `PartTree` et dans le même ordre :
 
@@ -243,9 +244,18 @@ Sortie :
   order_by  = { { property, direction } },
   params    = { { name, java_type } },   -- accumulés dans l'ordre
   state     = "<état terminal>",
+  fragment  = "<jeton en cours de frappe>",
   errors    = { { code, message, at } },
 }
 ```
+
+`fragment` est le suffixe de `source` que l'utilisateur est encore en train de
+taper : chaîne vide dès que tout le texte tapé est résolu. Il n'intervient pas plus
+que `fields` dans le découpage — il en est une conséquence, pas une entrée — et sert
+à `suggestions` pour filtrer ce qui est proposé. Chaque proposition porte en regard
+un `replace_length`, le nombre de caractères que son libellé remplace à la fin du
+texte tapé ; zéro signifie « ajoute à la suite ». Sans lui, taper un caractère de
+plus faisait disparaître toute proposition utile.
 
 ### États terminaux
 
@@ -387,8 +397,13 @@ Par entité, invalidé sur `BufWritePost` du fichier de l'entité.
   fois au moins une propriété sélectionnée — le comportement inverse de Spring Tools
   est considéré comme du bruit par ses propres mainteneurs
   (`spring-projects/spring-tools#1014`).
+- **Aucune signature proposée quand la validation n'a pas eu lieu.** Une liste de
+  champs indisponible (jdtls pas encore attaché, `workspace/symbol` muet) vide
+  `errors` sans rien avoir vérifié : `entity.fields` le signale par un second retour,
+  et la source s'abstient alors de proposer une signature. Les fragments restent
+  proposés.
 - `insertText` : snippet LuaSnip, tabstops sur les noms de paramètres.
-- Documentation de l'item : signature complète et snippet JPQL correspondant.
+- Documentation de l'item : signature complète.
 
 ## 11. Tests
 
@@ -402,8 +417,15 @@ requis.
 
 `parser_spec.lua` couvre les cas du §6, écrits avant l'implémentation.
 
-`entity.lua` et `source.lua` sont validés manuellement dans Neovim sur un projet
-Spring Boot 3 / Maven à entités `jakarta.persistence`.
+`source_spec.lua` couvre les fonctions pures de la source — préfixe courant,
+composition du texte inséré, snippet, décision de proposer une signature, fusion des
+options. Le module ne référence `vim` que dans le corps de `enabled` et
+`get_completions`, il reste donc chargeable sous luajit nu : ces références ne
+doivent jamais remonter au niveau du chargement, sous peine de rendre la suite
+inexécutable sans Neovim.
+
+`entity.lua` et le reste de `source.lua` sont validés manuellement dans Neovim sur un
+projet Spring Boot 3 / Maven à entités `jakarta.persistence`.
 
 ## 12. Ordre de réalisation
 
@@ -420,7 +442,24 @@ Spring Boot 3 / Maven à entités `jakarta.persistence`.
 - LSP Java : `nvim-jdtls`.
 - Complétion : `blink.cmp`. Snippets : LuaSnip. Parser treesitter `java` installé.
 
-## 14. Références
+## 14. Écarts consignés
+
+Deux écarts entre ce document et le code, relevés à la relecture finale et tranchés
+en faveur du code :
+
+- **Le champ n'a pas de `category` (§6).** La spec décrivait le enregistrement de
+  champ comme `{ name, java_type, category, annotations }`. La catégorie a été
+  retirée du code partout : elle est dérivable du type Java par `parser.categorize`,
+  et la dupliquer dans la donnée aurait créé deux vérités à tenir en accord. La spec
+  est corrigée, le code est resté.
+- **Pas de snippet JPQL dans la documentation de l'item (§10).** La spec promettait
+  « signature complète et snippet JPQL correspondant » ; seule la signature Java est
+  émise. Rendre le JPQL exact demanderait de reproduire la génération de requête de
+  `JpaQueryCreator` — jointures, `upper()` d'`IgnoreCase`, paramètres nommés —, pour
+  un texte purement indicatif que rien n'insère. La promesse est retirée de la spec
+  plutôt qu'implémentée.
+
+## 15. Références
 
 - `spring-data-commons` : `PartTree.java`, `Part.java`, `OrderBySource.java`
 - `spring-data-jpa` : `JpaQueryCreator.java`

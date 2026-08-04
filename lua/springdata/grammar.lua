@@ -53,4 +53,85 @@ M.boxed = {
   ["boolean"] = "Boolean",
 }
 
+-- Part.Type, transcrit dans l'ordre de la constante ALL.
+--
+-- L'ORDRE EST SIGNIFICATIF. Le code Java porte le commentaire « Need to list
+-- them again explicitly as the order is important ». Le parser retient le
+-- premier type dont un alias satisfait endsWith : c'est cet ordre qui fait
+-- que « NotNull » donne IS_NOT_NULL et non IS_NULL, « NotLike » NOT_LIKE et
+-- non LIKE, « NotIn » NOT_IN et non IN.
+--
+-- Champ `jpa` : false pour les types que le parser doit savoir reconnaître
+-- mais que la source ne proposera jamais.
+--   REGEX, EXISTS : absents du switch de JpaQueryCreator, lèvent
+--                   « Unsupported keyword » au démarrage.
+--   NEAR, WITHIN  : supportés par JPA, mais pour la recherche vectorielle,
+--                   avec un paramètre Score ou Range<Score>. Hors v1.
+--
+-- Champ `accepts` : SEULE donnée qui ne provient pas de Spring. C'est le
+-- filtrage par type ajouté par le plugin. « all » signifie toute catégorie.
+-- Noter que le jeu neutre appliqué aux types inconnus n'est pas codé en dur :
+-- il émerge de cette colonne, « unknown » n'étant listé que par IN / NOT_IN,
+-- les autres types s'appuyant sur « all ».
+M.types = {
+  { name = "IS_NOT_NULL", keywords = { "IsNotNull", "NotNull" }, args = 0, jpa = true,
+    accepts = "all", requires_nullable = true },
+  { name = "IS_NULL", keywords = { "IsNull", "Null" }, args = 0, jpa = true,
+    accepts = "all", requires_nullable = true },
+  { name = "BETWEEN", keywords = { "IsBetween", "Between" }, args = 2, jpa = true,
+    accepts = { "numeric", "temporal" } },
+  { name = "LESS_THAN", keywords = { "IsLessThan", "LessThan" }, args = 1, jpa = true,
+    accepts = { "numeric", "temporal" } },
+  { name = "LESS_THAN_EQUAL", keywords = { "IsLessThanEqual", "LessThanEqual" }, args = 1, jpa = true,
+    accepts = { "numeric", "temporal" } },
+  { name = "GREATER_THAN", keywords = { "IsGreaterThan", "GreaterThan" }, args = 1, jpa = true,
+    accepts = { "numeric", "temporal" } },
+  { name = "GREATER_THAN_EQUAL", keywords = { "IsGreaterThanEqual", "GreaterThanEqual" }, args = 1, jpa = true,
+    accepts = { "numeric", "temporal" } },
+  { name = "BEFORE", keywords = { "IsBefore", "Before" }, args = 1, jpa = true,
+    accepts = { "temporal" } },
+  { name = "AFTER", keywords = { "IsAfter", "After" }, args = 1, jpa = true,
+    accepts = { "temporal" } },
+  { name = "NOT_LIKE", keywords = { "IsNotLike", "NotLike" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "LIKE", keywords = { "IsLike", "Like" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "STARTING_WITH", keywords = { "IsStartingWith", "StartingWith", "StartsWith" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "ENDING_WITH", keywords = { "IsEndingWith", "EndingWith", "EndsWith" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "IS_NOT_EMPTY", keywords = { "IsNotEmpty", "NotEmpty" }, args = 0, jpa = true,
+    accepts = { "collection" } },
+  { name = "IS_EMPTY", keywords = { "IsEmpty", "Empty" }, args = 0, jpa = true,
+    accepts = { "collection" } },
+  { name = "NOT_CONTAINING", keywords = { "IsNotContaining", "NotContaining", "NotContains" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "CONTAINING", keywords = { "IsContaining", "Containing", "Contains" }, args = 1, jpa = true,
+    accepts = { "string" } },
+  { name = "NOT_IN", keywords = { "IsNotIn", "NotIn" }, args = 1, jpa = true,
+    accepts = { "string", "numeric", "temporal", "boolean", "unknown" } },
+  { name = "IN", keywords = { "IsIn", "In" }, args = 1, jpa = true,
+    accepts = { "string", "numeric", "temporal", "boolean", "unknown" } },
+  { name = "NEAR", keywords = { "IsNear", "Near" }, args = 1, jpa = false,
+    accepts = {} },
+  { name = "WITHIN", keywords = { "IsWithin", "Within" }, args = 1, jpa = false,
+    accepts = {} },
+  { name = "REGEX", keywords = { "MatchesRegex", "Matches", "Regex" }, args = 1, jpa = false,
+    accepts = {} },
+  { name = "EXISTS", keywords = { "Exists" }, args = 0, jpa = false,
+    accepts = {} },
+  { name = "TRUE", keywords = { "IsTrue", "True" }, args = 0, jpa = true,
+    accepts = { "boolean" } },
+  { name = "FALSE", keywords = { "IsFalse", "False" }, args = 0, jpa = true,
+    accepts = { "boolean" } },
+  { name = "NEGATING_SIMPLE_PROPERTY", keywords = { "IsNot", "Not" }, args = 1, jpa = true,
+    accepts = "all" },
+  { name = "SIMPLE_PROPERTY", keywords = { "Is", "Equals" }, args = 1, jpa = true,
+    accepts = "all" },
+}
+
+-- Type retenu par défaut quand aucun alias ne correspond, conformément à
+-- Part.Type.fromProperty qui retourne SIMPLE_PROPERTY en dernier recours.
+M.default_type = M.types[#M.types]
+
 return M

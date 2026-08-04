@@ -262,9 +262,18 @@ end
 --- Récupère les champs d'une entité, en passant par le cache.
 --- jdtls localise le fichier via workspace/symbol, treesitter en extrait le
 --- contenu — documentSymbol ne remonterait pas les annotations.
+---
+--- `callback(fields, ok)`. `ok` est faux quand la liste n'a PAS pu être
+--- établie — jdtls pas encore attaché, workspace/symbol muet, fichier
+--- illisible — par opposition à une entité réellement dépourvue de champ
+--- persistable, qui donne une liste vide avec `ok` vrai. Les deux cas
+--- produisent la même liste vide côté parser, qui désactive alors la
+--- validation (§6) ; sans ce second retour, l'appelant confondrait
+--- « aucune erreur relevée » avec « vérifié », et proposerait des
+--- signatures fabriquées sur des propriétés jamais confrontées à l'entité.
 function M.fields(entity_name, callback)
   if cache[entity_name] then
-    callback(cache[entity_name])
+    callback(cache[entity_name], true)
     return
   end
 
@@ -278,7 +287,7 @@ function M.fields(entity_name, callback)
 
   local clients = vim.lsp.get_clients({ name = "jdtls" })
   if #clients == 0 then
-    callback({})
+    callback({}, false)
     return
   end
 
@@ -293,7 +302,15 @@ function M.fields(entity_name, callback)
   -- tardive et orpheline de cette requête sert quand même ses propres
   -- callbacks en attente, mais ne touche ni au cache ni à `pending`, qui
   -- appartiennent désormais à une éventuelle requête plus récente.
+  local resolved = false
   local function resolve(fields, ok)
+    -- Idempotent : l'appelant a deux chemins d'échec (envoi refusé et
+    -- réponse en erreur) qui pourraient sinon servir les mêmes callbacks
+    -- deux fois.
+    if resolved then
+      return
+    end
+    resolved = true
     fields = fields or {}
     if pending[entity_name] == waiters then
       pending[entity_name] = nil
@@ -302,11 +319,11 @@ function M.fields(entity_name, callback)
       end
     end
     for _, cb in ipairs(waiters) do
-      cb(fields)
+      cb(fields, ok)
     end
   end
 
-  clients[1]:request("workspace/symbol", { query = entity_name }, function(err, results)
+  local function on_symbols(err, results)
     if err or not results or #results == 0 then
       resolve(nil, false)
       return
@@ -338,7 +355,18 @@ function M.fields(entity_name, callback)
 
     uri_index[vim.uri_to_fname(uri)] = entity_name
     resolve(fields, true)
-  end)
+  end
+
+  -- `pending` est déjà posé : toute sortie qui ne passerait pas par
+  -- `resolve` laisserait cette entité muette pour le reste de la session,
+  -- et l'exception remonterait jusqu'à `get_completions`, donc à chaque
+  -- frappe. `Client:request` peut lever (handle invalide, client en cours
+  -- d'arrêt) et peut aussi répondre `false` sans jamais rappeler le
+  -- gestionnaire — les deux referment la porte de la même manière.
+  local ok, sent = pcall(clients[1].request, clients[1], "workspace/symbol", { query = entity_name }, on_symbols)
+  if not ok or sent == false then
+    resolve(nil, false)
+  end
 end
 
 --- Vide l'entrée de cache d'une entité, ou tout le cache si aucun nom donné.

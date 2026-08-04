@@ -156,4 +156,26 @@ function M.parse_subject(source)
   return nil
 end
 
+--- Détermine le type de condition d'une part et en extrait la propriété brute.
+---
+--- Reproduit Part.Type.fromProperty : parcours de grammar.types DANS L'ORDRE,
+--- premier type dont un alias satisfait endsWith. C'est l'ordre, et non une
+--- règle de plus longue correspondance, qui donne le bon résultat :
+--- « ageLessThanEqual » ne se termine pas par « LessThan », donc LESS_THAN
+--- est écarté au profit de LESS_THAN_EQUAL.
+---
+--- Sans correspondance, SIMPLE_PROPERTY et la part entière, conformément au
+--- dernier `return SIMPLE_PROPERTY` de fromProperty.
+function M.detect_type(part)
+  for _, type_entry in ipairs(grammar.types) do
+    for _, keyword in ipairs(type_entry.keywords) do
+      if M.ends_with(part, keyword) then
+        return type_entry, part:sub(1, #part - #keyword)
+      end
+    end
+  end
+
+  return grammar.default_type, part
+end
+
 return M

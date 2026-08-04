@@ -189,3 +189,75 @@ t.describe("parser › parse_subject", function()
     t.eq(parser.parse_subject("fetchByName"), nil)
   end)
 end)
+
+t.describe("parser › detect_type", function()
+  local function name_of(part)
+    local ty = parser.detect_type(part)
+    return ty.name
+  end
+
+  t.it("retombe sur SIMPLE_PROPERTY sans mot-clé", function()
+    local ty, property = parser.detect_type("name")
+    t.eq(ty.name, "SIMPLE_PROPERTY")
+    t.eq(property, "name")
+  end)
+
+  t.it("distingue GreaterThanEqual de GreaterThan", function()
+    t.eq(name_of("ageGreaterThan"), "GREATER_THAN")
+    t.eq(name_of("ageGreaterThanEqual"), "GREATER_THAN_EQUAL")
+  end)
+
+  t.it("distingue LessThanEqual de LessThan", function()
+    t.eq(name_of("ageLessThan"), "LESS_THAN")
+    t.eq(name_of("ageLessThanEqual"), "LESS_THAN_EQUAL")
+  end)
+
+  t.it("préfère IS_NOT_NULL à IS_NULL, comme l'ordre de ALL l'impose", function()
+    t.eq(name_of("nameNotNull"), "IS_NOT_NULL")
+    t.eq(name_of("nameIsNotNull"), "IS_NOT_NULL")
+    t.eq(name_of("nameNull"), "IS_NULL")
+  end)
+
+  t.it("préfère NOT_LIKE à LIKE", function()
+    t.eq(name_of("nameNotLike"), "NOT_LIKE")
+    t.eq(name_of("nameLike"), "LIKE")
+  end)
+
+  t.it("préfère NOT_IN à IN", function()
+    t.eq(name_of("ageNotIn"), "NOT_IN")
+    t.eq(name_of("ageIn"), "IN")
+  end)
+
+  t.it("préfère NOT_CONTAINING à CONTAINING", function()
+    t.eq(name_of("nameNotContaining"), "NOT_CONTAINING")
+    t.eq(name_of("nameContaining"), "CONTAINING")
+  end)
+
+  t.it("reconnaît tous les alias de STARTING_WITH", function()
+    t.eq(name_of("nameStartingWith"), "STARTING_WITH")
+    t.eq(name_of("nameStartsWith"), "STARTING_WITH")
+    t.eq(name_of("nameIsStartingWith"), "STARTING_WITH")
+  end)
+
+  t.it("retire le suffixe pour donner la propriété brute", function()
+    local _, property = parser.detect_type("ageBetween")
+    t.eq(property, "age")
+  end)
+
+  t.it("reconnaît les types non supportés par JPA pour pouvoir les signaler", function()
+    t.eq(name_of("nameRegex"), "REGEX")
+    t.eq(name_of("nameMatches"), "REGEX")
+  end)
+
+  t.it("préfère NEGATING_SIMPLE_PROPERTY à SIMPLE_PROPERTY", function()
+    t.eq(name_of("nameNot"), "NEGATING_SIMPLE_PROPERTY")
+    t.eq(name_of("nameIs"), "SIMPLE_PROPERTY")
+    t.eq(name_of("nameEquals"), "SIMPLE_PROPERTY")
+  end)
+
+  t.it("reconnaît BETWEEN et ses deux arguments", function()
+    local ty = parser.detect_type("ageBetween")
+    t.eq(ty.name, "BETWEEN")
+    t.eq(ty.args, 2)
+  end)
+end)

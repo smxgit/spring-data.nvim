@@ -39,30 +39,31 @@ local function capitalize(s)
   return s:sub(1, 1):upper() .. s:sub(2)
 end
 
---- Texte complet à proposer pour un fragment de suggestion.
+--- Texte complet à proposer pour une suggestion.
 ---
---- Tant que le sujet (find/count/exists/delete…) n'est pas encore reconnu
---- (`result.subject == nil`), `parser.suggestions` renvoie des mots entiers
---- qui REMPLACENT ce qui est tapé — pour "fin", le mot-clé candidat est
---- "find", pas un suffixe à concaténer (« fin » .. « find » donnerait
---- l'absurde « finfind »). Une fois le sujet reconnu, tout le reste
---- (modifieurs Distinct/First/Top/By, propriétés, mots-clés de condition,
---- connecteurs, directions de tri) s'ajoute à la suite du texte déjà tapé.
+--- `replace_length` dit combien de caractères de la FIN du texte tapé le
+--- libellé remplace : zéro pour ce qui s'ajoute à la suite (le cas courant),
+--- la longueur du jeton en cours de frappe sinon. C'est ainsi que
+--- « findByNameCont » + Containing donne « findByNameContaining » et non
+--- « findByNameContContaining », et que « fin » + find donne « find » et non
+--- l'absurde « finfind ». Le parser étant seul à savoir où commence le
+--- fragment, aucune chirurgie de chaîne n'est refaite ici.
 ---
 --- Les suggestions de nature "property" utilisent le nom du champ tel que
 --- déclaré (minuscule initiale) : il faut le capitaliser pour former un
 --- segment de méthode valide.
-local function fragment_text(prefix, result, suggestion)
+local function fragment_text(prefix, suggestion)
   local candidate = suggestion.label
   if suggestion.kind == "property" then
     candidate = capitalize(candidate)
   end
 
-  if not result.subject then
-    return candidate
+  local kept = #prefix - (suggestion.replace_length or 0)
+  if kept < 0 then
+    kept = 0
   end
 
-  return prefix .. candidate
+  return prefix:sub(1, kept) .. candidate
 end
 
 --- Construit le snippet LuaSnip de la signature complète.
@@ -102,6 +103,21 @@ local COMPLETE_STATES = {
   order_direction = true,
 }
 
+--- Vrai si la signature complète peut être proposée.
+---
+--- `fields_ok` est la condition décisive : sans liste de champs, le parser
+--- désactive la validation des propriétés (§6) et `errors` est donc vide
+--- parce que RIEN n'a été vérifié, non parce que la méthode est correcte.
+--- Confondre les deux fait proposer « List<UserEntity>
+--- findByNameCont(Object nameCont); » quand jdtls n'est pas encore attaché.
+--- Les fragments, eux, restent proposés : ils ne prétendent à rien.
+local function offers_signature(result, fields_ok)
+  return fields_ok == true
+    and COMPLETE_STATES[result.state] == true
+    and #result.predicates > 0
+    and #result.errors == 0
+end
+
 function M:get_completions(ctx, callback)
   local cancelled = false
   local bufnr = ctx.bufnr or vim.api.nvim_get_current_buf()
@@ -114,7 +130,7 @@ function M:get_completions(ctx, callback)
 
   local prefix = current_prefix(ctx)
 
-  entity.fields(entity_name, function(fields)
+  entity.fields(entity_name, function(fields, fields_ok)
     -- `entity.fields` répond de manière asynchrone (workspace/symbol vers
     -- jdtls) : si l'utilisateur a continué de taper ou a changé de contexte
     -- entre-temps, blink.cmp a appelé la fonction d'annulation renvoyée
@@ -130,7 +146,7 @@ function M:get_completions(ctx, callback)
 
     -- Fragments : propriétés, mots-clés, connecteurs, directions.
     for _, suggestion in ipairs(parser.suggestions(result, fields)) do
-      local label = fragment_text(prefix, result, suggestion)
+      local label = fragment_text(prefix, suggestion)
       items[#items + 1] = {
         label = label,
         filterText = label,
@@ -143,7 +159,7 @@ function M:get_completions(ctx, callback)
 
     -- Signature complète : jamais avant qu'une propriété soit sélectionnée,
     -- pour ne pas reproduire le `findBy` nu de Spring Tools (issue #1014).
-    if COMPLETE_STATES[result.state] and #result.predicates > 0 and #result.errors == 0 then
+    if offers_signature(result, fields_ok) then
       local return_type = parser.return_type(result, entity_name, self.opts)
       items[#items + 1] = {
         label = prefix,
@@ -182,5 +198,17 @@ function M:get_completions(ctx, callback)
     cancelled = true
   end
 end
+
+--- Fonctions pures de ce module, exposées pour tests/source_spec.lua.
+--- blink.cmp n'appelle que new/enabled/get_completions : elles n'ont aucune
+--- autre raison d'être publiques, mais elles portent deux des trois défauts
+--- que la relecture finale a relevés ici et doivent donc être épinglées.
+M.internal = {
+  current_prefix = current_prefix,
+  capitalize = capitalize,
+  fragment_text = fragment_text,
+  build_snippet = build_snippet,
+  offers_signature = offers_signature,
+}
 
 return M

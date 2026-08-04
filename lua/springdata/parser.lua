@@ -468,4 +468,66 @@ function M.parse(source, fields)
   return result
 end
 
+--- Vrai si le champ porte @Id ou @Column(unique = true).
+local function is_unique_field(field)
+  if not field then
+    return false
+  end
+  for _, annotation in ipairs(field.annotations or {}) do
+    if annotation == "Id" then
+      return true
+    end
+    if annotation:find("Column", 1, true) and annotation:find("unique", 1, true) then
+      local value = annotation:match("unique%s*=%s*(%a+)")
+      if value == "true" then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- Déduit le type de retour de la méthode.
+---
+--- Optional<T> est réservé aux requêtes dont la cardinalité maximale est
+--- garantie à un. La table officielle des types de retour est explicite :
+--- « Expects the query method to return one result at most. More than one
+--- result triggers an IncorrectResultSizeDataAccessException. » Le cas
+--- « aucun résultat » est déjà couvert par List<T>, qui renvoie une liste
+--- vide et jamais null.
+function M.return_type(result, entity_name, opts)
+  opts = opts or {}
+  local subject = result.subject
+
+  if not subject then
+    return "List<" .. entity_name .. ">"
+  end
+
+  if subject.category == "count" then
+    return "long"
+  end
+  if subject.category == "exists" then
+    return "boolean"
+  end
+  if subject.category == "delete" then
+    return opts.delete_return_type == "long" and "long" or "void"
+  end
+
+  if subject.max_results == 1 then
+    return "Optional<" .. entity_name .. ">"
+  end
+  if subject.max_results and subject.max_results > 1 then
+    return "List<" .. entity_name .. ">"
+  end
+
+  if #result.predicates == 1 then
+    local predicate = result.predicates[1]
+    if predicate.type.name == "SIMPLE_PROPERTY" and is_unique_field(predicate.field) then
+      return "Optional<" .. entity_name .. ">"
+    end
+  end
+
+  return "List<" .. entity_name .. ">"
+end
+
 return M

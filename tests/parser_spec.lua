@@ -540,3 +540,63 @@ t.describe("parser › états terminaux", function()
     t.eq(parser.parse("findByNameOrderByAgeAsc", FIELDS).state, "order_direction")
   end)
 end)
+
+t.describe("parser › return_type", function()
+  local function rt(source, opts)
+    return parser.return_type(parser.parse(source, FIELDS), "UserEntity", opts)
+  end
+
+  t.it("donne long pour count", function()
+    t.eq(rt("countByName"), "long")
+  end)
+
+  t.it("donne boolean pour exists", function()
+    t.eq(rt("existsByName"), "boolean")
+  end)
+
+  t.it("donne void pour delete par défaut", function()
+    t.eq(rt("deleteByName"), "void")
+    t.eq(rt("removeByName"), "void")
+  end)
+
+  t.it("donne long pour delete si l'option le demande", function()
+    t.eq(rt("deleteByName", { delete_return_type = "long" }), "long")
+  end)
+
+  t.it("donne Optional pour First et Top sans nombre", function()
+    t.eq(rt("findFirstByName"), "Optional<UserEntity>")
+    t.eq(rt("findTopByName"), "Optional<UserEntity>")
+  end)
+
+  t.it("donne Optional pour la forme explicite Top1", function()
+    t.eq(rt("findTop1ByName"), "Optional<UserEntity>")
+  end)
+
+  t.it("donne List pour une limite supérieure à un", function()
+    t.eq(rt("findTop5ByName"), "List<UserEntity>")
+  end)
+
+  t.it("donne Optional pour une égalité sur un champ annoté Id", function()
+    t.eq(rt("findById"), "Optional<UserEntity>")
+  end)
+
+  t.it("donne Optional pour une égalité sur un champ unique", function()
+    t.eq(rt("findByEmail"), "Optional<UserEntity>")
+  end)
+
+  t.it("donne List pour un champ non unique", function()
+    t.eq(rt("findByName"), "List<UserEntity>")
+  end)
+
+  t.it("donne List pour une condition non égalitaire sur un champ unique", function()
+    t.eq(rt("findByIdGreaterThan"), "List<UserEntity>")
+  end)
+
+  t.it("donne List dès qu'un second prédicat s'ajoute à un champ unique", function()
+    t.eq(rt("findByEmailAndName"), "List<UserEntity>")
+  end)
+
+  t.it("donne List quand un Or relie les prédicats", function()
+    t.eq(rt("findByEmailOrName"), "List<UserEntity>")
+  end)
+end)

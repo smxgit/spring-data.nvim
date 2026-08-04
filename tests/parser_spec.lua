@@ -715,12 +715,20 @@ t.describe("parser › suggestions", function()
     t.truthy(contains(labels, "By"), "By attendu")
   end)
 
-  t.it("propose les introducteurs tant qu'aucun n'est reconnu", function()
-    for _, source in ipairs({ "", "fin" }) do
-      local labels = labels_of(suggest(source))
-      for _, keyword in ipairs({ "find", "count", "exists", "delete" }) do
-        t.truthy(contains(labels, keyword), "introducteur manquant pour '" .. source .. "' : " .. keyword)
-      end
+  t.it("propose tous les introducteurs sur une chaîne vide", function()
+    local labels = labels_of(suggest(""))
+    for _, keyword in ipairs({ "find", "count", "exists", "delete" }) do
+      t.truthy(contains(labels, keyword), "introducteur manquant : " .. keyword)
+    end
+  end)
+
+  t.it("restreint les introducteurs à ceux que le fragment commence", function()
+    -- Avant la complétion par fragment, les dix introducteurs étaient
+    -- proposés quel que soit le texte tapé ; « fin » n'en commence qu'un.
+    local labels = labels_of(suggest("fin"))
+    t.truthy(contains(labels, "find"), "find attendu")
+    for _, keyword in ipairs({ "count", "exists", "delete", "By", "Distinct" }) do
+      t.eq(contains(labels, keyword), false)
     end
   end)
 
@@ -749,5 +757,109 @@ t.describe("parser › suggestions", function()
     for _, keyword in ipairs({ "Containing", "Between", "True", "IsEmpty" }) do
       t.eq(contains(labels, keyword), false)
     end
+  end)
+end)
+
+-- Complétion d'un jeton partiel : le scénario même du plugin. Tant que la
+-- fin de la chaîne ne résout pas, les propositions doivent REMPLACER ce
+-- fragment au lieu de s'y ajouter — sans quoi taper un caractère de plus
+-- faisait disparaître toute proposition utile, ou produisait des absurdités
+-- du genre « findDistDistinct ».
+t.describe("parser › suggestions sur fragment", function()
+  local function suggest(source, fields)
+    fields = fields or FIELDS
+    return parser.suggestions(parser.parse(source, fields), fields)
+  end
+
+  -- Texte réellement inséré : le libellé remplace `replace_length`
+  -- caractères en fin de source. Reproduit ce que fait source.lua, pour
+  -- pouvoir énoncer les attentes sous leur forme observable.
+  local function inserted(source, label, fields)
+    for _, s in ipairs(suggest(source, fields)) do
+      if s.label == label then
+        local text = s.label
+        if s.kind == "property" then
+          text = text:sub(1, 1):upper() .. text:sub(2)
+        end
+        return source:sub(1, #source - s.replace_length) .. text
+      end
+    end
+    return nil
+  end
+
+  t.it("complète un mot-clé de condition amorcé", function()
+    t.eq(inserted("findByNameCont", "Containing"), "findByNameContaining")
+    t.eq(inserted("findByNameCont", "Contains"), "findByNameContains")
+  end)
+
+  t.it("ne propose que ce que le fragment commence", function()
+    local labels = labels_of(suggest("findByNameCont"))
+    t.eq(labels, { "Containing", "Contains" })
+  end)
+
+  t.it("complète un nom de champ amorcé", function()
+    t.eq(inserted("findByNa", "name"), "findByName")
+    t.eq(labels_of(suggest("findByNa")), { "name" })
+  end)
+
+  t.it("complète un champ dont le nom se termine par un connecteur", function()
+    t.eq(inserted("findByLogicalAn", "logicalAnd"), "findByLogicalAnd")
+  end)
+
+  t.it("complète un connecteur amorcé après une propriété", function()
+    t.eq(inserted("findByNameAn", "And"), "findByNameAnd")
+    t.eq(inserted("findByNameOrderB", "OrderBy"), "findByNameOrderBy")
+  end)
+
+  t.it("complète un modificateur de sujet sans le dupliquer", function()
+    t.eq(inserted("findDist", "Distinct"), "findDistinct")
+    t.eq(inserted("findDistinctFir", "First"), "findDistinctFirst")
+    t.eq(inserted("findTop5B", "By"), "findTop5By")
+  end)
+
+  t.it("ne repropose pas un modificateur déjà posé", function()
+    t.eq(contains(labels_of(suggest("findDistinct")), "Distinct"), false)
+    t.eq(contains(labels_of(suggest("findFirst")), "First"), false)
+    t.truthy(contains(labels_of(suggest("findDistinct")), "By"), "By reste proposé")
+  end)
+
+  t.it("ne propose rien sur un fragment qui ne correspond à rien", function()
+    t.eq(suggest("findByZzz"), {})
+    t.eq(suggest("findByNameZzz"), {})
+  end)
+
+  t.it("traite un fragment égal à un nom de champ complet comme achevé", function()
+    local r = parser.parse("findByName", FIELDS)
+    t.eq(r.fragment, "")
+    for _, s in ipairs(parser.suggestions(r, FIELDS)) do
+      t.eq(s.replace_length, 0)
+    end
+    t.eq(inserted("findByName", "Containing"), "findByNameContaining")
+    t.eq(inserted("findByName", "And"), "findByNameAnd")
+  end)
+
+  t.it("complète une propriété de tri amorcée", function()
+    t.eq(inserted("findByNameOrderByNa", "name"), "findByNameOrderByName")
+    t.eq(labels_of(suggest("findByNameOrderByNa")), { "name" })
+  end)
+
+  t.it("complète une direction de tri amorcée", function()
+    t.eq(inserted("findByNameOrderByAgeA", "Asc"), "findByNameOrderByAgeAsc")
+    t.eq(inserted("findByNameOrderByAgeDe", "Desc"), "findByNameOrderByAgeDesc")
+  end)
+
+  t.it("ne propose pas de seconde direction sur un bloc de tri clos", function()
+    t.eq(contains(labels_of(suggest("findByNameOrderByAgeAsc")), "Asc"), false)
+    t.truthy(contains(labels_of(suggest("findByNameOrderByAgeAsc")), "name"), "champ attendu")
+  end)
+
+  t.it("ne devine aucun fragment sans liste de champs", function()
+    -- Sans champs, la validation est désactivée (§6) : rien ne distingue un
+    -- fragment d'une propriété achevée. On retombe alors sur l'ancien
+    -- comportement — ajouter à la suite — plutôt que de deviner.
+    local r = parser.parse("findByNameCont", {})
+    t.eq(r.fragment, "")
+    local labels = labels_of(parser.suggestions(r, {}))
+    t.eq(labels, { "And", "Or", "OrderBy" })
   end)
 end)

@@ -128,6 +128,11 @@ end
 ---
 --- Renvoie nil si aucun introducteur ne correspond ; l'appelant traite alors
 --- la chaîne entière comme un prédicat, comme le fait PartTree.
+---
+--- Le groupe médian brut est conservé dans `middle` : c'est de lui que se
+--- déduit le fragment encore en cours de frappe dans l'état « subject »
+--- (« Dist » dans « findDist »), qui n'est déductible d'aucun des champs
+--- déjà normalisés.
 function M.parse_subject(source)
   for _, intro in ipairs(grammar.introducers) do
     if source:sub(1, #intro.keyword) == intro.keyword then
@@ -149,6 +154,7 @@ function M.parse_subject(source)
         distinct = middle:find(grammar.distinct, 1, true) ~= nil,
         max_results = parse_limiting(middle, intro.category),
         has_by = has_by,
+        middle = middle,
       }, predicate
     end
   end
@@ -295,6 +301,28 @@ local function parse_order_by(clause)
   return out
 end
 
+--- Portion du groupe médian du sujet qui n'a encore été reconnue ni comme
+--- Distinct ni comme First/Top : c'est ce que l'utilisateur est en train de
+--- taper (« Dist » dans « findDist », « Fir » dans « findDistinctFir »).
+local function subject_residual(middle, category)
+  local rest = middle or ""
+
+  if rest:sub(1, #grammar.distinct) == grammar.distinct then
+    rest = rest:sub(#grammar.distinct + 1)
+  end
+
+  if category == "query" then
+    for _, keyword in ipairs(grammar.limiting) do
+      if rest:sub(1, #keyword) == keyword then
+        rest = rest:sub(#keyword + 1):gsub("^%d+", "")
+        break
+      end
+    end
+  end
+
+  return rest
+end
+
 --- Détermine l'état terminal, c'est-à-dire ce qui est attendu à la position
 --- courante. C'est ce qui distingue ce parser de PartTree, lequel ne traite
 --- que des chaînes complètes.
@@ -339,6 +367,55 @@ local function terminal_state(source, subject, result, has_order_by)
   return "after_property"
 end
 
+--- Fragment encore en cours de frappe à la position courante : la portion
+--- FINALE de `source` qu'une proposition doit REMPLACER au lieu de la
+--- prolonger. Chaîne vide quand tout ce qui est tapé est déjà résolu, auquel
+--- cas les propositions s'ajoutent à la suite comme avant.
+---
+--- Sans lui, taper un seul caractère d'un champ ou d'un mot-clé rendait la
+--- propriété irrésolvable et faisait disparaître toute proposition utile.
+---
+--- Le fragment est toujours un suffixe littéral de `source` : c'est ce qui
+--- permet au consommateur de ne compter que des caractères. Les deux cas où
+--- la propriété retenue n'est PAS un suffixe de la source — un mot-clé
+--- explicite la suit (état after_condition), ou un Ignor(ing|e)Case a été
+--- retiré du milieu — renvoient donc la chaîne vide.
+local function terminal_fragment(source, subject, result, fields, all_ignore_case)
+  local state = result.state
+
+  if state == "subject" then
+    if not subject then
+      return source
+    end
+    return subject_residual(subject.middle, subject.category)
+  end
+
+  -- La validation des propriétés est désactivée sans liste de champs (§6) :
+  -- rien ne permet alors de distinguer un fragment d'une propriété achevée,
+  -- et deviner reviendrait à proposer n'importe quoi. On s'abstient.
+  if #fields == 0 or all_ignore_case then
+    return ""
+  end
+
+  if state == "after_property" then
+    local last = result.predicates[#result.predicates]
+    if not last or last.field or last.ignore_case or last.property == "" then
+      return ""
+    end
+    return source:sub(-#last.property)
+  end
+
+  if state == "order_direction" then
+    local last = result.order_by[#result.order_by]
+    if not last or last.direction or last.property == "" or find_field(fields, last.property) then
+      return ""
+    end
+    return source:sub(-#last.property)
+  end
+
+  return ""
+end
+
 --- Analyse une chaîne de derived query method, éventuellement incomplète.
 ---
 --- `fields` est une liste de { name, java_type, annotations }. Elle peut être
@@ -359,6 +436,10 @@ end
 --- compris quand il n'est suivi de rien. Les consommateurs DOIVENT se fier à
 --- `state` pour savoir si le dernier prédicat est fiable, jamais au seul
 --- contenu de `predicates`.
+---
+--- `fragment` complète ce contrat : c'est le suffixe de `source` que
+--- l'utilisateur est encore en train de taper (voir terminal_fragment). Il
+--- vaut la chaîne vide dès que tout le texte tapé est résolu.
 function M.parse(source, fields)
   fields = fields or {}
 
@@ -368,6 +449,7 @@ function M.parse(source, fields)
     order_by = {},
     params = {},
     state = "subject",
+    fragment = "",
     errors = {},
   }
 
@@ -376,6 +458,7 @@ function M.parse(source, fields)
 
   if not subject or not subject.has_by then
     result.state = "subject"
+    result.fragment = terminal_fragment(source, subject, result, fields, false)
     return result
   end
 
@@ -397,7 +480,7 @@ function M.parse(source, fields)
   local or_segments = compact(M.split_on_keyword(order_segments[1], "Or"))
   local first = true
 
-  for or_index, or_segment in ipairs(or_segments) do
+  for _, or_segment in ipairs(or_segments) do
     local and_segments = compact(M.split_on_keyword(or_segment, "And"))
 
     for and_index, part in ipairs(and_segments) do
@@ -457,14 +540,10 @@ function M.parse(source, fields)
         result.params[#result.params + 1] = param
       end
     end
-
-    -- Le connecteur du premier prédicat du groupe suivant est un Or.
-    if or_index < #or_segments then
-      first = false
-    end
   end
 
   result.state = terminal_state(source, subject, result, has_order_by)
+  result.fragment = terminal_fragment(source, subject, result, fields, all_ignore_case)
   return result
 end
 
@@ -530,6 +609,24 @@ function M.return_type(result, entity_name, opts)
   return "List<" .. entity_name .. ">"
 end
 
+--- Vrai si `typed` est un préfixe de `label`, la casse de la première lettre
+--- mise à part. Les libellés de champs remontent en lowerCamelCase
+--- (« name ») quand les mots-clés sont capitalisés (« Containing »), alors
+--- que le fragment tapé porte la casse de la source (« Na ») : seule la
+--- première lettre peut donc légitimement différer.
+local function prefix_matches(typed, label)
+  if typed == "" then
+    return true
+  end
+  if #typed > #label then
+    return false
+  end
+  if typed:sub(1, 1):lower() ~= label:sub(1, 1):lower() then
+    return false
+  end
+  return typed:sub(2) == label:sub(2, #typed)
+end
+
 --- Traduit l'état terminal en propositions, filtrage par type appliqué.
 ---
 --- Les types dont `jpa` est faux ne sont jamais proposés : REGEX et EXISTS
@@ -538,76 +635,159 @@ end
 ---
 --- Le jeu neutre des types inconnus n'est pas codé ici : il découle de la
 --- colonne `accepts` de grammar.types.
+---
+--- Chaque proposition porte un `replace_length` : le nombre de caractères
+--- que son libellé remplace À LA FIN du texte tapé. Zéro — le cas de tout ce
+--- qui est déjà résolu — signifie « ajoute à la suite ». C'est ce qui permet
+--- de compléter un jeton partiel : sur « findByNameCont », Containing
+--- remplace les quatre caractères de « Cont » pour donner
+--- « findByNameContaining ». Le consommateur n'a ainsi aucune chirurgie de
+--- chaîne à refaire de son côté.
+---
+--- Le fragment sert à FILTRER ce qui est proposé, jamais à redécouper la
+--- chaîne : `result` est le seul découpage, et il ne consulte pas les
+--- champs. Décomposer le fragment en « champ + reste » relève du choix des
+--- propositions, ce que cette fonction fait déjà à partir de `fields`.
 function M.suggestions(result, fields)
   fields = fields or {}
+  local fragment = result.fragment or ""
   local out = {}
 
-  local function add(label, kind, detail)
-    out[#out + 1] = { label = label, kind = kind, detail = detail }
+  --- N'émet la proposition que si `typed` en est un préfixe.
+  local function add(typed, label, kind, detail)
+    if prefix_matches(typed, label) then
+      out[#out + 1] = { label = label, kind = kind, detail = detail, replace_length = #typed }
+    end
   end
 
-  local function add_fields()
+  local function add_fields(typed)
     for _, field in ipairs(fields) do
-      add(field.name, "property", field.java_type)
+      add(typed, field.name, "property", field.java_type)
     end
   end
 
-  local state = result.state
-
-  if state == "subject" then
-    local category = result.subject and result.subject.category or "query"
-    if not result.subject then
-      for _, intro in ipairs(grammar.introducers) do
-        add(intro.keyword, "modifier", intro.category)
-      end
-    end
-    add(grammar.distinct, "modifier", "résultats distincts")
-    if category == "query" then
-      for _, keyword in ipairs(grammar.limiting) do
-        add(keyword, "modifier", "limite le nombre de résultats")
-      end
-    end
-    add("By", "modifier", "introduit le prédicat")
-    return out
-  end
-
-  if state == "expect_property" or state == "order_property" then
-    add_fields()
-    return out
-  end
-
-  if state == "order_direction" then
-    for _, direction in ipairs(grammar.directions) do
-      add(direction, "direction", "sens du tri")
-    end
-    add_fields()
-    return out
-  end
-
-  -- after_property et after_condition
-  local last = result.predicates[#result.predicates]
-  local field = last and last.field
-  local category = field and M.categorize(field.java_type) or nil
-  local java_type = field and field.java_type or nil
-
-  if state == "after_property" and category then
+  --- Conditions compatibles avec le type de `field`.
+  local function add_conditions(typed, field)
+    local category = M.categorize(field.java_type)
     for _, type_entry in ipairs(grammar.types) do
-      if type_entry.jpa and accepts_category(type_entry, category, java_type) then
+      if type_entry.jpa and accepts_category(type_entry, category, field.java_type) then
         for _, keyword in ipairs(type_entry.keywords) do
-          add(keyword, "keyword", type_entry.name)
+          add(typed, keyword, "keyword", type_entry.name)
         end
       end
     end
   end
 
-  if state == "after_condition" and category == "string" then
-    add("IgnoreCase", "keyword", "comparaison insensible à la casse")
+  local function add_connectors(typed)
+    for _, connector in ipairs(grammar.connectors) do
+      add(typed, connector, "connector", "relie deux prédicats")
+    end
+    add(typed, grammar.order_by, "connector", "clause de tri")
   end
 
-  for _, connector in ipairs(grammar.connectors) do
-    add(connector, "connector", "relie deux prédicats")
+  --- Reste du fragment au-delà du nom de `field`, ou nil si le fragment ne
+  --- prolonge pas ce champ. Sert à proposer ce qui peut suivre une propriété
+  --- dont seule la fin reste à taper : « NameCont » prolonge « name » du
+  --- reste « Cont ».
+  local function tail_of(field)
+    if #fragment <= #field.name or not prefix_matches(field.name, fragment) then
+      return nil
+    end
+    return fragment:sub(#field.name + 1)
   end
-  add(grammar.order_by, "connector", "clause de tri")
+
+  local state = result.state
+
+  if state == "subject" then
+    local subject = result.subject
+    local category = subject and subject.category or "query"
+    if not subject then
+      for _, intro in ipairs(grammar.introducers) do
+        add(fragment, intro.keyword, "modifier", intro.category)
+      end
+    end
+    -- Distinct et First/Top n'apparaissent qu'une fois : les reproposer
+    -- alors qu'ils sont déjà là ne peut produire qu'un « findDistinctDistinct »
+    -- que Spring rejette.
+    if not (subject and subject.distinct) then
+      add(fragment, grammar.distinct, "modifier", "résultats distincts")
+    end
+    if category == "query" and not (subject and subject.max_results) then
+      for _, keyword in ipairs(grammar.limiting) do
+        add(fragment, keyword, "modifier", "limite le nombre de résultats")
+      end
+    end
+    add(fragment, "By", "modifier", "introduit le prédicat")
+    return out
+  end
+
+  -- Ces deux états n'ont jamais de fragment : le connecteur ou le OrderBy
+  -- vient d'être tapé, la propriété qui suit est encore intégralement à
+  -- écrire.
+  if state == "expect_property" or state == "order_property" then
+    add_fields(fragment)
+    return out
+  end
+
+  if state == "order_direction" then
+    local sort = result.order_by[#result.order_by]
+
+    if fragment == "" then
+      -- Une direction déjà posée clôt le bloc : seule une nouvelle propriété
+      -- de tri peut suivre. En proposer une seconde donnerait
+      -- « OrderByAgeAscAsc », dont la deuxième propriété est vide.
+      if not (sort and sort.direction) then
+        for _, direction in ipairs(grammar.directions) do
+          add("", direction, "direction", "sens du tri")
+        end
+      end
+      add_fields("")
+      return out
+    end
+
+    add_fields(fragment)
+    for _, field in ipairs(fields) do
+      local tail = tail_of(field)
+      if tail then
+        for _, direction in ipairs(grammar.directions) do
+          add(tail, direction, "direction", "sens du tri")
+        end
+      end
+    end
+    return out
+  end
+
+  local last = result.predicates[#result.predicates]
+  local field = last and last.field
+
+  if state == "after_property" then
+    if fragment == "" then
+      if field then
+        add_conditions("", field)
+      end
+      add_connectors("")
+      return out
+    end
+
+    -- Propriété encore incomplète : on propose d'un côté les champs dont
+    -- elle est un début, de l'autre ce qui peut suivre un champ qu'elle
+    -- prolonge. Un fragment qui ne correspond à rien ne propose rien.
+    add_fields(fragment)
+    for _, candidate in ipairs(fields) do
+      local tail = tail_of(candidate)
+      if tail then
+        add_conditions(tail, candidate)
+        add_connectors(tail)
+      end
+    end
+    return out
+  end
+
+  -- after_condition
+  if field and M.categorize(field.java_type) == "string" then
+    add("", "IgnoreCase", "keyword", "comparaison insensible à la casse")
+  end
+  add_connectors("")
 
   return out
 end

@@ -92,4 +92,68 @@ function M.categorize(java_type)
   return grammar.categories[base] or "unknown"
 end
 
+--- Extrait la limitation First/Top du groupe médian du sujet.
+--- Reproduit LIMITED_QUERY_TEMPLATE, qui impose l'ordre Distinct puis
+--- First/Top et ne s'applique qu'à la catégorie « query ».
+local function parse_limiting(middle, category)
+  if category ~= "query" then
+    return nil
+  end
+
+  local rest = middle
+  if rest:sub(1, #grammar.distinct) == grammar.distinct then
+    rest = rest:sub(#grammar.distinct + 1)
+  end
+
+  for _, keyword in ipairs(grammar.limiting) do
+    if rest:sub(1, #keyword) == keyword then
+      local digits = rest:sub(#keyword + 1):match("^%d*")
+      if digits == "" then
+        return 1
+      end
+      return tonumber(digits)
+    end
+  end
+
+  return nil
+end
+
+--- Analyse le sujet et renvoie le reste, c'est-à-dire le prédicat.
+---
+--- Reproduit PREFIX_TEMPLATE :
+---   ^(find|read|…|remove)((\p{Lu}.*?))??By
+--- Le groupe médian étant optionnel et réticent, on essaie d'abord sans lui
+--- — By collé à l'introducteur —, puis avec, en exigeant une majuscule en
+--- première position et en retenant le premier By rencontré.
+---
+--- Renvoie nil si aucun introducteur ne correspond ; l'appelant traite alors
+--- la chaîne entière comme un prédicat, comme le fait PartTree.
+function M.parse_subject(source)
+  for _, intro in ipairs(grammar.introducers) do
+    if source:sub(1, #intro.keyword) == intro.keyword then
+      local rest = source:sub(#intro.keyword + 1)
+      local s, e = rest:find("By", 1, true)
+
+      local middle, predicate, has_by
+      if s == 1 then
+        middle, predicate, has_by = "", rest:sub(e + 1), true
+      elseif s and rest:sub(1, 1):match("%u") then
+        middle, predicate, has_by = rest:sub(1, s - 1), rest:sub(e + 1), true
+      else
+        middle, predicate, has_by = rest, nil, false
+      end
+
+      return {
+        introducer = intro.keyword,
+        category = intro.category,
+        distinct = middle:find(grammar.distinct, 1, true) ~= nil,
+        max_results = parse_limiting(middle, intro.category),
+        has_by = has_by,
+      }, predicate
+    end
+  end
+
+  return nil
+end
+
 return M

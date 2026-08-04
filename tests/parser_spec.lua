@@ -299,6 +299,11 @@ local FIELDS = {
   { name = "active", java_type = "boolean", annotations = {} },
   { name = "orders", java_type = "List<Order>", annotations = { "OneToMany" } },
   { name = "andrew", java_type = "String", annotations = {} },
+  -- Champs dont le nom se termine par un mot-clé de découpage, pour couvrir
+  -- la même collision que "andrew" mais sur And/Or/OrderBy en fin de chaîne.
+  { name = "logicalAnd", java_type = "String", annotations = {} },
+  { name = "sortOrderBy", java_type = "String", annotations = {} },
+  { name = "isOr", java_type = "String", annotations = {} },
 }
 
 local function names_of(list, key)
@@ -346,6 +351,34 @@ t.describe("parser › parse", function()
   t.it("découpe correctement un champ collisionnant suivi d'un vrai And", function()
     local r = parser.parse("findByAndrewAndAge", FIELDS)
     t.eq(names_of(r.predicates, "property"), { "andrew", "age" })
+    t.eq(r.errors, {})
+  end)
+
+  -- Régression : le découpage ne consulte JAMAIS la liste des champs (voir
+  -- contraintes du plan). "findByLogicalAnd" est donc indécidable depuis la
+  -- seule chaîne — And en cours de frappe, ou champ "logicalAnd" complet —
+  -- et split_on_keyword tranche comme PartTree : and/Or/OrderBy en toute
+  -- fin de chaîne, non suivis d'une majuscule, restent attachés au texte.
+  -- Quand le champ correspondant existe réellement, ce choix est le bon :
+  -- la propriété complète est retrouvée sans erreur.
+  t.it("reconnaît un champ dont le nom se termine par And", function()
+    local r = parser.parse("findByLogicalAnd", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "logicalAnd")
+    t.eq(r.errors, {})
+  end)
+
+  t.it("reconnaît un champ dont le nom se termine par OrderBy", function()
+    local r = parser.parse("findBySortOrderBy", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "sortOrderBy")
+    t.eq(r.errors, {})
+  end)
+
+  t.it("reconnaît un champ dont le nom se termine par Or", function()
+    local r = parser.parse("findByIsOr", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "isOr")
     t.eq(r.errors, {})
   end)
 
@@ -455,16 +488,20 @@ t.describe("parser › états terminaux", function()
     t.eq(parser.parse("findByNameOr", FIELDS).state, "expect_property")
   end)
 
-  t.it("ne laisse aucun prédicat fantôme après un connecteur encore sans propriété", function()
-    -- And/Or en toute fin de chaîne ne peut pas se découper (pas de
-    -- majuscule après) : sans retrait explicite, ce texte restait collé au
-    -- dernier prédicat et produisait un prédicat, un paramètre et une
-    -- erreur unknown_property fantômes.
+  t.it("porte le connecteur encore en cours de frappe comme fragment du dernier prédicat", function()
+    -- "findByNameAnd" est indécidable depuis la seule chaîne : soit un And
+    -- pas encore suivi de propriété, soit un champ nommé "nameAnd" complet.
+    -- Le découpage ne consultant JAMAIS la liste des champs (contrainte du
+    -- plan), split_on_keyword tranche comme PartTree : And en toute fin de
+    -- chaîne, non suivi de majuscule, reste collé au texte. Le fragment
+    -- "nameAnd" atterrit donc bien dans predicates/params/errors ; c'est
+    -- `state` — "expect_property" ici — qui indique au consommateur de ne
+    -- pas s'y fier tel quel. Voir le contrat documenté sur M.parse.
     local r = parser.parse("findByNameAnd", FIELDS)
     t.eq(#r.predicates, 1)
-    t.eq(r.predicates[1].property, "name")
-    t.eq(r.errors, {})
-    t.eq(r.params, { { name = "name", java_type = "String" } })
+    t.eq(r.predicates[1].property, "nameAnd")
+    t.eq(r.errors, { { code = "unknown_property", message = "propriété inconnue : nameAnd" } })
+    t.eq(r.params, { { name = "nameAnd", java_type = "Object" } })
     t.eq(r.state, "expect_property")
   end)
 
@@ -481,19 +518,20 @@ t.describe("parser › états terminaux", function()
     t.eq(parser.parse("findByNameOrderBy", FIELDS).state, "order_property")
   end)
 
-  t.it("ne laisse aucun prédicat fantôme après un OrderBy encore vide", function()
-    -- OrderBy en toute fin de chaîne ne peut pas se découper non plus (même
-    -- raison que ci-dessus) : sans retrait explicite du suffixe, "OrderBy"
-    -- restait collé au dernier prédicat et produisait un prédicat, un
-    -- paramètre fantômes — sans même remonter d'erreur, puisque "nameOrderBy"
-    -- ressemblait alors à une propriété inconnue plutôt qu'à un OrderBy en
-    -- cours de frappe.
+  t.it("porte le OrderBy encore en cours de frappe comme fragment du dernier prédicat", function()
+    -- Même indécidabilité que pour And/Or ci-dessus : "findByNameOrderBy"
+    -- pourrait être un champ complet nommé "nameOrderBy". split_on_keyword
+    -- rejette le découpage (OrderBy en toute fin de chaîne, aucune majuscule
+    -- ne suit), donc "NameOrderBy" reste une part entière et devient le
+    -- prédicat SIMPLE_PROPERTY "nameOrderBy", avec son erreur
+    -- unknown_property et son paramètre associés. `state` reste correct
+    -- ("order_property") grâce au seul correctif retenu dans terminal_state.
     local r = parser.parse("findByNameOrderBy", FIELDS)
     t.eq(#r.predicates, 1)
-    t.eq(r.predicates[1].property, "name")
+    t.eq(r.predicates[1].property, "nameOrderBy")
     t.eq(r.order_by, {})
-    t.eq(r.errors, {})
-    t.eq(r.params, { { name = "name", java_type = "String" } })
+    t.eq(r.errors, { { code = "unknown_property", message = "propriété inconnue : nameOrderBy" } })
+    t.eq(r.params, { { name = "nameOrderBy", java_type = "Object" } })
     t.eq(r.state, "order_property")
   end)
 

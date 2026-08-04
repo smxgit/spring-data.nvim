@@ -26,12 +26,48 @@ exactement comme Spring l'interprétera à l'exécution.
 
 ## Installation
 
+Prérequis : nvim-jdtls attaché sur le buffer Java, blink.cmp comme moteur de
+complétion, le parser treesitter `java` installé.
+
+### Avec `vim.pack` (Neovim ≥ 0.12)
+
+```lua
+vim.pack.add({
+  { src = "https://github.com/smxgit/spring-data.nvim" },
+})
+
+require("spring-data").setup({})
+```
+
+### Avec lazy.nvim / LazyVim
+
+```lua
+{
+  "smxgit/spring-data.nvim",
+  main = "spring-data",
+  ft = "java",
+  opts = {},
+}
+```
+
+`opts = {}` suffit : lazy.nvim appelle `require("spring-data").setup(opts)`
+automatiquement. `main` est précisé explicitement pour lever toute ambiguïté
+sur le nom du module — lazy.nvim le déduirait correctement du nom du dépôt
+(`spring-data.nvim` → `spring-data`), mais autant ne pas en dépendre.
+
+### En développement local
+
+Pour travailler sur le plugin lui-même, sans passer par un gestionnaire :
+
 ```lua
 vim.opt.rtp:prepend("/chemin/vers/spring-data.nvim")
 require("spring-data").setup({})
 ```
 
-Puis déclarer la source dans blink.cmp :
+### Déclarer la source blink.cmp
+
+Quelle que soit la méthode d'installation, la source doit être ajoutée à la
+configuration de blink.cmp :
 
 ```lua
 sources = {

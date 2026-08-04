@@ -1,0 +1,111 @@
+local t = require("harness")
+local parser = require("springdata.parser")
+
+t.describe("parser › split_on_keyword", function()
+  t.it("découpe quand le mot-clé est suivi d'une majuscule", function()
+    t.eq(parser.split_on_keyword("NameAndAge", "And"), { "Name", "Age" })
+  end)
+
+  t.it("ne découpe pas quand la suite est en minuscule", function()
+    t.eq(parser.split_on_keyword("andrewAge", "And"), { "andrewAge" })
+    t.eq(parser.split_on_keyword("AndrewAge", "And"), { "AndrewAge" })
+  end)
+
+  t.it("ne découpe que sur les occurrences valides", function()
+    t.eq(parser.split_on_keyword("AndrewAndAge", "And"), { "Andrew", "Age" })
+  end)
+
+  t.it("ne découpe pas sur un mot-clé en fin de chaîne", function()
+    t.eq(parser.split_on_keyword("NameAnd", "And"), { "NameAnd" })
+  end)
+
+  t.it("produit un segment vide en tête comme le split de Java", function()
+    t.eq(parser.split_on_keyword("AndId", "And"), { "", "Id" })
+  end)
+
+  t.it("gère les occurrences multiples", function()
+    t.eq(parser.split_on_keyword("AAndBAndC", "And"), { "A", "B", "C" })
+  end)
+
+  t.it("renvoie la chaîne intacte en l'absence du mot-clé", function()
+    t.eq(parser.split_on_keyword("Name", "And"), { "Name" })
+  end)
+end)
+
+t.describe("parser › ends_with", function()
+  t.it("reconnaît un suffixe", function()
+    t.eq(parser.ends_with("ageBetween", "Between"), true)
+  end)
+
+  t.it("rejette un non-suffixe", function()
+    t.eq(parser.ends_with("ageLessThanEqual", "LessThan"), false)
+    t.eq(parser.ends_with("ageLessThanEqual", "LessThanEqual"), true)
+  end)
+
+  t.it("rejette un suffixe plus long que la chaîne", function()
+    t.eq(parser.ends_with("Is", "IsNotNull"), false)
+  end)
+end)
+
+t.describe("parser › decapitalize", function()
+  t.it("abaisse la première lettre", function()
+    t.eq(parser.decapitalize("Name"), "name")
+  end)
+
+  t.it("préserve les acronymes comme Introspector.decapitalize", function()
+    t.eq(parser.decapitalize("URL"), "URL")
+    t.eq(parser.decapitalize("ID"), "ID")
+  end)
+
+  t.it("laisse une chaîne vide intacte", function()
+    t.eq(parser.decapitalize(""), "")
+  end)
+
+  t.it("laisse une chaîne déjà en minuscule intacte", function()
+    t.eq(parser.decapitalize("name"), "name")
+  end)
+end)
+
+t.describe("parser › strip_ignore_case", function()
+  t.it("retire IgnoreCase et le signale", function()
+    local part, found = parser.strip_ignore_case("nameContainingIgnoreCase")
+    t.eq(part, "nameContaining")
+    t.eq(found, true)
+  end)
+
+  t.it("retire la variante IgnoringCase", function()
+    local part, found = parser.strip_ignore_case("nameIgnoringCase")
+    t.eq(part, "name")
+    t.eq(found, true)
+  end)
+
+  t.it("ne signale rien en l'absence du motif", function()
+    local part, found = parser.strip_ignore_case("nameContaining")
+    t.eq(part, "nameContaining")
+    t.eq(found, false)
+  end)
+end)
+
+t.describe("parser › categorize", function()
+  t.it("classe les types connus", function()
+    t.eq(parser.categorize("String"), "string")
+    t.eq(parser.categorize("int"), "numeric")
+    t.eq(parser.categorize("LocalDate"), "temporal")
+    t.eq(parser.categorize("Boolean"), "boolean")
+  end)
+
+  t.it("reconnaît les conteneurs génériques", function()
+    t.eq(parser.categorize("List<Order>"), "collection")
+    t.eq(parser.categorize("Set<String>"), "collection")
+    t.eq(parser.categorize("Collection<Long>"), "collection")
+  end)
+
+  t.it("classe en unknown les enums et entités liées", function()
+    t.eq(parser.categorize("Status"), "unknown")
+    t.eq(parser.categorize("AddressEntity"), "unknown")
+  end)
+
+  t.it("ignore les paramètres génériques d'un type non conteneur", function()
+    t.eq(parser.categorize("Optional<String>"), "unknown")
+  end)
+end)

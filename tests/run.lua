@@ -12,6 +12,7 @@ local harness = require("harness")
 
 local specs = {
   "grammar_spec",
+  "parser_spec",
 }
 
 for _, spec in ipairs(specs) do

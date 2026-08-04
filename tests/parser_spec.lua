@@ -411,6 +411,10 @@ t.describe("parser › parse", function()
   t.it("signale un mot-clé non supporté par JPA", function()
     local r = parser.parse("findByNameRegex", FIELDS)
     t.eq(r.errors[1].code, "unsupported_keyword")
+    -- Un mot-clé hors JPA ne doit pas en plus être signalé comme
+    -- incompatible avec le type du champ : ce serait une seconde erreur
+    -- factuellement fausse (le problème n'est pas le type de "name").
+    t.eq(#r.errors, 1)
   end)
 
   t.it("signale une condition incompatible avec le type du champ", function()
@@ -451,6 +455,19 @@ t.describe("parser › états terminaux", function()
     t.eq(parser.parse("findByNameOr", FIELDS).state, "expect_property")
   end)
 
+  t.it("ne laisse aucun prédicat fantôme après un connecteur encore sans propriété", function()
+    -- And/Or en toute fin de chaîne ne peut pas se découper (pas de
+    -- majuscule après) : sans retrait explicite, ce texte restait collé au
+    -- dernier prédicat et produisait un prédicat, un paramètre et une
+    -- erreur unknown_property fantômes.
+    local r = parser.parse("findByNameAnd", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "name")
+    t.eq(r.errors, {})
+    t.eq(r.params, { { name = "name", java_type = "String" } })
+    t.eq(r.state, "expect_property")
+  end)
+
   t.it("suit une propriété sans condition", function()
     t.eq(parser.parse("findByName", FIELDS).state, "after_property")
   end)
@@ -462,6 +479,22 @@ t.describe("parser › états terminaux", function()
 
   t.it("attend une propriété de tri après OrderBy", function()
     t.eq(parser.parse("findByNameOrderBy", FIELDS).state, "order_property")
+  end)
+
+  t.it("ne laisse aucun prédicat fantôme après un OrderBy encore vide", function()
+    -- OrderBy en toute fin de chaîne ne peut pas se découper non plus (même
+    -- raison que ci-dessus) : sans retrait explicite du suffixe, "OrderBy"
+    -- restait collé au dernier prédicat et produisait un prédicat, un
+    -- paramètre fantômes — sans même remonter d'erreur, puisque "nameOrderBy"
+    -- ressemblait alors à une propriété inconnue plutôt qu'à un OrderBy en
+    -- cours de frappe.
+    local r = parser.parse("findByNameOrderBy", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "name")
+    t.eq(r.order_by, {})
+    t.eq(r.errors, {})
+    t.eq(r.params, { { name = "name", java_type = "String" } })
+    t.eq(r.state, "order_property")
   end)
 
   t.it("attend une direction après une propriété de tri", function()

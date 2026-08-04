@@ -366,6 +366,16 @@ function M.parse(source, fields)
 
   local predicate, all_ignore_case = strip_all_ignore_case(predicate_source)
 
+  -- Correctif : un OrderBy tapé mais pas encore suivi d'une propriété de tri
+  -- ne peut pas se découper — split_on_keyword exige une majuscule après le
+  -- mot-clé, et une fin de chaîne n'en offre aucune (même raison que dans
+  -- terminal_state ci-dessus). Sans ce retrait, "OrderBy" reste collé au
+  -- texte du dernier prédicat et produit un prédicat fantôme. On le traite
+  -- ici comme une clause de tri présente mais encore vide.
+  if M.ends_with(predicate, grammar.order_by) then
+    predicate = predicate:sub(1, #predicate - #grammar.order_by)
+  end
+
   local order_segments = M.split_on_keyword(predicate, grammar.order_by)
   if #order_segments > 2 then
     result.errors[#result.errors + 1] = {
@@ -379,7 +389,20 @@ function M.parse(source, fields)
     result.order_by = parse_order_by(order_segments[2])
   end
 
-  local or_segments = compact(M.split_on_keyword(order_segments[1], "Or"))
+  -- Même correctif pour un connecteur tapé mais pas encore suivi d'une
+  -- propriété : And/Or en toute fin de clause ne peut pas non plus se
+  -- découper, faute de majuscule suivante. La perte de ce And/Or terminal
+  -- n'efface aucune information utile : terminal_state lit `source`
+  -- directement pour restituer l'état "expect_property".
+  local clause = order_segments[1]
+  for _, connector in ipairs(grammar.connectors) do
+    if M.ends_with(clause, connector) then
+      clause = clause:sub(1, #clause - #connector)
+      break
+    end
+  end
+
+  local or_segments = compact(M.split_on_keyword(clause, "Or"))
   local first = true
 
   for or_index, or_segment in ipairs(or_segments) do
@@ -415,7 +438,11 @@ function M.parse(source, fields)
         }
       end
 
-      if field then
+      -- Un mot-clé que JPA ne supporte pas du tout n'a pas de sens à évaluer
+      -- vis-à-vis du type du champ : ce serait signaler deux fois la même
+      -- faute, la seconde fois pour un motif faux (le champ n'y est pour
+      -- rien). Seul un mot-clé JPA valide peut être incompatible avec un type.
+      if field and type_entry.jpa then
         local category = M.categorize(field.java_type)
         if not accepts_category(type_entry, category, field.java_type) then
           result.errors[#result.errors + 1] = {

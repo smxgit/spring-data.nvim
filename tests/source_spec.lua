@@ -7,9 +7,9 @@
 -- en bout, qui a besoin de treesitter et de jdtls — est vérifié à la main
 -- sous `nvim --headless` ; voir le rapport de la passe de correction.
 local t = require("harness")
-local parser = require("springdata.parser")
-local source = require("springdata.source")
-local springdata = require("springdata")
+local parser = require("spring-data.parser")
+local source = require("spring-data.source")
+local spring_data = require("spring-data")
 
 local internal = source.internal
 
@@ -171,10 +171,10 @@ end)
 
 t.describe("source › options", function()
   local function with_setup_opts(opts, fn)
-    local previous = springdata.opts
-    springdata.opts = opts
+    local previous = spring_data.opts
+    spring_data.opts = opts
     local ok, err = pcall(fn)
-    springdata.opts = previous
+    spring_data.opts = previous
     if not ok then
       error(err, 0)
     end
@@ -194,7 +194,7 @@ t.describe("source › options", function()
   end)
 
   -- Le défaut documenté ne servait à rien : il était écrit dans
-  -- springdata.opts et lu par personne, `self.opts` venant du provider.
+  -- spring-data.opts et lu par personne, `self.opts` venant du provider.
   t.it("achemine l'option jusqu'au type de retour", function()
     with_setup_opts({ delete_return_type = "long" }, function()
       local result = parser.parse("deleteByName", FIELDS)

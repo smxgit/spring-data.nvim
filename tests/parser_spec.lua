@@ -1,5 +1,5 @@
 local t = require("harness")
-local parser = require("springdata.parser")
+local parser = require("spring-data.parser")
 
 t.describe("parser › split_on_keyword", function()
   t.it("découpe quand le mot-clé est suivi d'une majuscule", function()

@@ -5,7 +5,7 @@
 --
 -- Le pipeline reproduit PartTree. Le découpage ne consulte jamais la liste
 -- des champs : celle-ci sert uniquement à valider les propriétés obtenues.
-local grammar = require("springdata.grammar")
+local grammar = require("spring-data.grammar")
 
 local M = {}
 

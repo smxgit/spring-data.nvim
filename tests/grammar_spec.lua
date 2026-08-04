@@ -1,5 +1,5 @@
 local t = require("harness")
-local grammar = require("springdata.grammar")
+local grammar = require("spring-data.grammar")
 
 t.describe("grammar › introducteurs", function()
   t.it("couvre exactement les dix mots-clés de PartTree", function()

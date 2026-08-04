@@ -10,7 +10,7 @@ M.opts = defaults
 
 function M.setup(opts)
   M.opts = vim.tbl_deep_extend("force", defaults, opts or {})
-  require("springdata.entity").setup_autocmds()
+  require("spring-data.entity").setup_autocmds()
   return M.opts
 end
 

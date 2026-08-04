@@ -1,6 +1,6 @@
 -- Source blink.cmp pour les derived query methods Spring Data.
-local parser = require("springdata.parser")
-local entity = require("springdata.entity")
+local parser = require("spring-data.parser")
+local entity = require("spring-data.entity")
 
 local M = {}
 
@@ -118,20 +118,20 @@ local function offers_signature(result, fields_ok)
     and #result.errors == 0
 end
 
---- Options effectives : celles de `require("springdata").setup{}`, écrasées
+--- Options effectives : celles de `require("spring-data").setup{}`, écrasées
 --- par celles déclarées sur le provider blink.
 ---
 --- `M.new` ne reçoit que les seconds — la clé `opts` de la configuration du
 --- provider —, presque toujours absentes. Sans cette fusion, une option
 --- passée à `setup{}` n'atteignait jamais `parser.return_type` : elle était
---- écrite dans `springdata.opts` et lue par personne.
+--- écrite dans `spring-data.opts` et lue par personne.
 ---
 --- Fusion à la main plutôt que par `vim.tbl_extend` : ce module doit rester
 --- chargeable sous un interpréteur nu pour que ses fonctions pures soient
 --- testables sans Neovim.
 local function options(provider_opts)
   local merged = {}
-  for key, value in pairs(require("springdata").opts or {}) do
+  for key, value in pairs(require("spring-data").opts or {}) do
     merged[key] = value
   end
   for key, value in pairs(provider_opts or {}) do

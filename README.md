@@ -1,4 +1,4 @@
-# springdata.nvim
+# spring-data.nvim
 
 Complétion des *derived query methods* Spring Data JPA dans Neovim, à la manière
 d'IntelliJ IDEA.
@@ -27,19 +27,19 @@ exactement comme Spring l'interprétera à l'exécution.
 ## Installation
 
 ```lua
-vim.opt.rtp:prepend("/chemin/vers/springdata.nvim")
-require("springdata").setup({})
+vim.opt.rtp:prepend("/chemin/vers/spring-data.nvim")
+require("spring-data").setup({})
 ```
 
 Puis déclarer la source dans blink.cmp :
 
 ```lua
 sources = {
-  default = { "lsp", "path", "snippets", "buffer", "springdata" },
+  default = { "lsp", "path", "snippets", "buffer", "spring-data" },
   providers = {
-    springdata = {
+    ["spring-data"] = {
       name = "SpringData",
-      module = "springdata.source",
+      module = "spring-data.source",
       score_offset = 100,
       min_keyword_length = 3,
     },

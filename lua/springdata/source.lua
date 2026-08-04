@@ -118,6 +118,28 @@ local function offers_signature(result, fields_ok)
     and #result.errors == 0
 end
 
+--- Options effectives : celles de `require("springdata").setup{}`, écrasées
+--- par celles déclarées sur le provider blink.
+---
+--- `M.new` ne reçoit que les seconds — la clé `opts` de la configuration du
+--- provider —, presque toujours absentes. Sans cette fusion, une option
+--- passée à `setup{}` n'atteignait jamais `parser.return_type` : elle était
+--- écrite dans `springdata.opts` et lue par personne.
+---
+--- Fusion à la main plutôt que par `vim.tbl_extend` : ce module doit rester
+--- chargeable sous un interpréteur nu pour que ses fonctions pures soient
+--- testables sans Neovim.
+local function options(provider_opts)
+  local merged = {}
+  for key, value in pairs(require("springdata").opts or {}) do
+    merged[key] = value
+  end
+  for key, value in pairs(provider_opts or {}) do
+    merged[key] = value
+  end
+  return merged
+end
+
 function M:get_completions(ctx, callback)
   local cancelled = false
   local bufnr = ctx.bufnr or vim.api.nvim_get_current_buf()
@@ -160,7 +182,7 @@ function M:get_completions(ctx, callback)
     -- Signature complète : jamais avant qu'une propriété soit sélectionnée,
     -- pour ne pas reproduire le `findBy` nu de Spring Tools (issue #1014).
     if offers_signature(result, fields_ok) then
-      local return_type = parser.return_type(result, entity_name, self.opts)
+      local return_type = parser.return_type(result, entity_name, options(self.opts))
       items[#items + 1] = {
         label = prefix,
         filterText = prefix,
@@ -209,6 +231,7 @@ M.internal = {
   fragment_text = fragment_text,
   build_snippet = build_snippet,
   offers_signature = offers_signature,
+  options = options,
 }
 
 return M

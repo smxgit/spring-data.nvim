@@ -9,6 +9,7 @@
 local t = require("harness")
 local parser = require("springdata.parser")
 local source = require("springdata.source")
+local springdata = require("springdata")
 
 local internal = source.internal
 
@@ -165,5 +166,43 @@ t.describe("source › offers_signature", function()
 
   t.it("distingue une entité sans champ d'une liste indisponible", function()
     t.eq(offered("findByName", {}, true), true)
+  end)
+end)
+
+t.describe("source › options", function()
+  local function with_setup_opts(opts, fn)
+    local previous = springdata.opts
+    springdata.opts = opts
+    local ok, err = pcall(fn)
+    springdata.opts = previous
+    if not ok then
+      error(err, 0)
+    end
+  end
+
+  t.it("reprend les options de setup", function()
+    with_setup_opts({ delete_return_type = "long" }, function()
+      t.eq(internal.options({}).delete_return_type, "long")
+      t.eq(internal.options(nil).delete_return_type, "long")
+    end)
+  end)
+
+  t.it("laisse le provider avoir le dernier mot", function()
+    with_setup_opts({ delete_return_type = "long" }, function()
+      t.eq(internal.options({ delete_return_type = "void" }).delete_return_type, "void")
+    end)
+  end)
+
+  -- Le défaut documenté ne servait à rien : il était écrit dans
+  -- springdata.opts et lu par personne, `self.opts` venant du provider.
+  t.it("achemine l'option jusqu'au type de retour", function()
+    with_setup_opts({ delete_return_type = "long" }, function()
+      local result = parser.parse("deleteByName", FIELDS)
+      t.eq(parser.return_type(result, "UserEntity", internal.options({})), "long")
+    end)
+    with_setup_opts({ delete_return_type = "void" }, function()
+      local result = parser.parse("deleteByName", FIELDS)
+      t.eq(parser.return_type(result, "UserEntity", internal.options({})), "void")
+    end)
   end)
 end)

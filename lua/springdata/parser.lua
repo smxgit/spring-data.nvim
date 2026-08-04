@@ -178,4 +178,275 @@ function M.detect_type(part)
   return grammar.default_type, part
 end
 
+--- Retire AllIgnor(ing|e)Case du prédicat entier.
+--- Doit précéder tout découpage, comme le fait Predicate.detectAndSetAllIgnoreCase.
+local function strip_all_ignore_case(predicate)
+  for _, keyword in ipairs(grammar.all_ignore_case) do
+    local s, e = predicate:find(keyword, 1, true)
+    if s then
+      return predicate:sub(1, s - 1) .. predicate:sub(e + 1), true
+    end
+  end
+  return predicate, false
+end
+
+--- Filtre les segments vides produits par un découpage, à la manière du
+--- filter(StringUtils::hasText) appliqué côté Java.
+local function compact(segments)
+  local out = {}
+  for _, segment in ipairs(segments) do
+    if segment ~= "" then
+      out[#out + 1] = segment
+    end
+  end
+  return out
+end
+
+local function find_field(fields, property)
+  for _, field in ipairs(fields) do
+    if field.name == property then
+      return field
+    end
+  end
+  return nil
+end
+
+--- Vrai si le type de condition accepte la catégorie du champ.
+local function accepts_category(type_entry, category, java_type)
+  if type_entry.requires_nullable and grammar.primitives[java_type] then
+    return false
+  end
+  if type_entry.accepts == "all" then
+    return true
+  end
+  for _, accepted in ipairs(type_entry.accepts) do
+    if accepted == category then
+      return true
+    end
+  end
+  return false
+end
+
+--- Construit les paramètres induits par un prédicat.
+--- BETWEEN, seul type à deux arguments, produit <propriété>Start et
+--- <propriété>End. IN et NOT_IN produisent une Collection du type boxé, un
+--- générique Java n'acceptant pas de primitif.
+local function build_params(type_entry, property, field)
+  if type_entry.args == 0 then
+    return {}
+  end
+
+  local java_type = field and field.java_type or "Object"
+
+  if type_entry.name == "IN" or type_entry.name == "NOT_IN" then
+    local boxed = grammar.boxed[java_type] or java_type
+    return { { name = property, java_type = "Collection<" .. boxed .. ">" } }
+  end
+
+  if type_entry.accepts ~= "all" and #type_entry.accepts == 1 and type_entry.accepts[1] == "string" then
+    java_type = "String"
+  end
+
+  if type_entry.args == 2 then
+    return {
+      { name = property .. "Start", java_type = java_type },
+      { name = property .. "End", java_type = java_type },
+    }
+  end
+
+  return { { name = property, java_type = java_type } }
+end
+
+--- Analyse la clause de tri.
+--- Reproduit OrderBySource : découpage après Asc ou Desc suivi d'une
+--- majuscule, direction optionnelle en fin de bloc.
+local function parse_order_by(clause)
+  local blocks = {}
+  local start = 1
+  local i = 1
+
+  while i <= #clause do
+    for _, direction in ipairs(grammar.directions) do
+      local at = i - #direction + 1
+      if at >= 1 and clause:sub(at, i) == direction then
+        local next_char = clause:sub(i + 1, i + 1)
+        if next_char:match("^%u") then
+          blocks[#blocks + 1] = clause:sub(start, i)
+          start = i + 1
+        end
+      end
+    end
+    i = i + 1
+  end
+  blocks[#blocks + 1] = clause:sub(start)
+
+  local out = {}
+  for _, block in ipairs(compact(blocks)) do
+    local direction = nil
+    for _, candidate in ipairs(grammar.directions) do
+      if M.ends_with(block, candidate) then
+        direction = candidate
+        block = block:sub(1, #block - #candidate)
+        break
+      end
+    end
+    out[#out + 1] = { property = M.decapitalize(block), direction = direction }
+  end
+  return out
+end
+
+--- Détermine l'état terminal, c'est-à-dire ce qui est attendu à la position
+--- courante. C'est ce qui distingue ce parser de PartTree, lequel ne traite
+--- que des chaînes complètes.
+local function terminal_state(source, subject, result, has_order_by)
+  if not subject or not subject.has_by then
+    return "subject"
+  end
+
+  -- Correctif : un utilisateur qui vient de taper OrderBy attend une
+  -- propriété de tri. split_on_keyword rejette ce cas car OrderBy, en toute
+  -- fin de chaîne, n'est suivi d'aucun caractère — donc d'aucune majuscule —
+  -- si bien que has_order_by reste faux (même règle que pour "andrewAge",
+  -- ici appliquée à une position où elle ne devrait pas s'appliquer).
+  if M.ends_with(source, grammar.order_by) then
+    return "order_property"
+  end
+
+  if has_order_by then
+    if #result.order_by == 0 then
+      return "order_property"
+    end
+    return "order_direction"
+  end
+
+  for _, connector in ipairs(grammar.connectors) do
+    if M.ends_with(source, connector) then
+      return "expect_property"
+    end
+  end
+
+  if #result.predicates == 0 then
+    return "expect_property"
+  end
+
+  local last = result.predicates[#result.predicates]
+  if last.property == "" then
+    return "expect_property"
+  end
+  if last.explicit_keyword then
+    return "after_condition"
+  end
+  return "after_property"
+end
+
+--- Analyse une chaîne de derived query method, éventuellement incomplète.
+---
+--- `fields` est une liste de { name, java_type, annotations }. Elle peut être
+--- vide : la validation des propriétés est alors désactivée plutôt que de
+--- produire du bruit. Elle n'intervient JAMAIS dans le découpage.
+function M.parse(source, fields)
+  fields = fields or {}
+
+  local result = {
+    subject = nil,
+    predicates = {},
+    order_by = {},
+    params = {},
+    state = "subject",
+    errors = {},
+  }
+
+  local subject, predicate_source = M.parse_subject(source)
+  result.subject = subject
+
+  if not subject or not subject.has_by then
+    result.state = "subject"
+    return result
+  end
+
+  local predicate, all_ignore_case = strip_all_ignore_case(predicate_source)
+
+  local order_segments = M.split_on_keyword(predicate, grammar.order_by)
+  if #order_segments > 2 then
+    result.errors[#result.errors + 1] = {
+      code = "duplicate_order_by",
+      message = "OrderBy ne peut apparaître qu'une seule fois",
+    }
+  end
+
+  local has_order_by = #order_segments > 1
+  if has_order_by then
+    result.order_by = parse_order_by(order_segments[2])
+  end
+
+  local or_segments = compact(M.split_on_keyword(order_segments[1], "Or"))
+  local first = true
+
+  for or_index, or_segment in ipairs(or_segments) do
+    local and_segments = compact(M.split_on_keyword(or_segment, "And"))
+
+    for and_index, part in ipairs(and_segments) do
+      local connector
+      if first then
+        connector = nil
+        first = false
+      elseif and_index > 1 then
+        connector = "And"
+      else
+        connector = "Or"
+      end
+
+      local stripped, ignore_case = M.strip_ignore_case(part)
+      local type_entry, raw_property = M.detect_type(stripped)
+      local property = M.decapitalize(raw_property)
+      local field = find_field(fields, property)
+
+      if not type_entry.jpa then
+        result.errors[#result.errors + 1] = {
+          code = "unsupported_keyword",
+          message = type_entry.name .. " n'est pas supporté par Spring Data JPA",
+        }
+      end
+
+      if #fields > 0 and not field and property ~= "" then
+        result.errors[#result.errors + 1] = {
+          code = "unknown_property",
+          message = "propriété inconnue : " .. property,
+        }
+      end
+
+      if field then
+        local category = M.categorize(field.java_type)
+        if not accepts_category(type_entry, category, field.java_type) then
+          result.errors[#result.errors + 1] = {
+            code = "incompatible_type",
+            message = type_entry.name .. " ne s'applique pas à " .. field.java_type,
+          }
+        end
+      end
+
+      result.predicates[#result.predicates + 1] = {
+        property = property,
+        field = field,
+        type = type_entry,
+        ignore_case = ignore_case or all_ignore_case,
+        connector = connector,
+        explicit_keyword = raw_property ~= stripped,
+      }
+
+      for _, param in ipairs(build_params(type_entry, property, field)) do
+        result.params[#result.params + 1] = param
+      end
+    end
+
+    -- Le connecteur du premier prédicat du groupe suivant est un Or.
+    if or_index < #or_segments then
+      first = false
+    end
+  end
+
+  result.state = terminal_state(source, subject, result, has_order_by)
+  return result
+end
+
 return M

@@ -289,3 +289,183 @@ t.describe("parser › detect_type", function()
     t.eq(property, "")
   end)
 end)
+
+local FIELDS = {
+  { name = "id", java_type = "Long", annotations = { "Id" } },
+  { name = "name", java_type = "String", annotations = {} },
+  { name = "email", java_type = "String", annotations = { "Column(unique = true)" } },
+  { name = "age", java_type = "int", annotations = {} },
+  { name = "createdAt", java_type = "LocalDateTime", annotations = {} },
+  { name = "active", java_type = "boolean", annotations = {} },
+  { name = "orders", java_type = "List<Order>", annotations = { "OneToMany" } },
+  { name = "andrew", java_type = "String", annotations = {} },
+}
+
+local function names_of(list, key)
+  local out = {}
+  for _, item in ipairs(list) do
+    out[#out + 1] = item[key]
+  end
+  return out
+end
+
+t.describe("parser › parse", function()
+  t.it("analyse un prédicat simple", function()
+    local r = parser.parse("findByName", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "name")
+    t.eq(r.predicates[1].type.name, "SIMPLE_PROPERTY")
+    t.eq(r.predicates[1].connector, nil)
+    t.eq(r.params, { { name = "name", java_type = "String" } })
+    t.eq(r.errors, {})
+  end)
+
+  t.it("analyse deux prédicats reliés par And", function()
+    local r = parser.parse("findByNameAndAge", FIELDS)
+    t.eq(names_of(r.predicates, "property"), { "name", "age" })
+    t.eq(r.predicates[2].connector, "And")
+    t.eq(r.params, {
+      { name = "name", java_type = "String" },
+      { name = "age", java_type = "int" },
+    })
+  end)
+
+  t.it("analyse deux prédicats reliés par Or", function()
+    local r = parser.parse("findByNameOrAge", FIELDS)
+    t.eq(names_of(r.predicates, "property"), { "name", "age" })
+    t.eq(r.predicates[2].connector, "Or")
+  end)
+
+  t.it("ne découpe pas un champ dont le nom contient And", function()
+    local r = parser.parse("findByAndrewAge", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.predicates[1].property, "andrewAge")
+    t.eq(r.errors[1].code, "unknown_property")
+  end)
+
+  t.it("découpe correctement un champ collisionnant suivi d'un vrai And", function()
+    local r = parser.parse("findByAndrewAndAge", FIELDS)
+    t.eq(names_of(r.predicates, "property"), { "andrew", "age" })
+    t.eq(r.errors, {})
+  end)
+
+  t.it("génère deux paramètres pour Between", function()
+    local r = parser.parse("findByAgeBetween", FIELDS)
+    t.eq(r.params, {
+      { name = "ageStart", java_type = "int" },
+      { name = "ageEnd", java_type = "int" },
+    })
+  end)
+
+  t.it("ne génère aucun paramètre pour les conditions à zéro argument", function()
+    t.eq(parser.parse("findByNameIsNull", FIELDS).params, {})
+    t.eq(parser.parse("findByActiveTrue", FIELDS).params, {})
+    t.eq(parser.parse("findByOrdersIsEmpty", FIELDS).params, {})
+  end)
+
+  t.it("type le paramètre de In comme une Collection du wrapper", function()
+    t.eq(parser.parse("findByAgeIn", FIELDS).params, {
+      { name = "age", java_type = "Collection<Integer>" },
+    })
+    t.eq(parser.parse("findByNameIn", FIELDS).params, {
+      { name = "name", java_type = "Collection<String>" },
+    })
+  end)
+
+  t.it("détecte IgnoreCase sans perturber le type", function()
+    local r = parser.parse("findByNameContainingIgnoreCase", FIELDS)
+    t.eq(r.predicates[1].type.name, "CONTAINING")
+    t.eq(r.predicates[1].property, "name")
+    t.eq(r.predicates[1].ignore_case, true)
+  end)
+
+  t.it("retire AllIgnoreCase avant tout découpage", function()
+    local r = parser.parse("findByNameAllIgnoreCaseAndAge", FIELDS)
+    t.eq(names_of(r.predicates, "property"), { "name", "age" })
+  end)
+
+  t.it("analyse un tri avec direction", function()
+    local r = parser.parse("findByNameOrderByAgeDesc", FIELDS)
+    t.eq(#r.predicates, 1)
+    t.eq(r.order_by, { { property = "age", direction = "Desc" } })
+  end)
+
+  t.it("analyse un tri sans direction explicite", function()
+    local r = parser.parse("findByNameOrderByAge", FIELDS)
+    t.eq(r.order_by, { { property = "age", direction = nil } })
+  end)
+
+  t.it("analyse un tri sur plusieurs propriétés", function()
+    local r = parser.parse("findByNameOrderByAgeAscIdDesc", FIELDS)
+    t.eq(r.order_by, {
+      { property = "age", direction = "Asc" },
+      { property = "id", direction = "Desc" },
+    })
+  end)
+
+  t.it("signale un double OrderBy", function()
+    local r = parser.parse("findByNameOrderByAgeOrderByName", FIELDS)
+    t.eq(r.errors[1].code, "duplicate_order_by")
+  end)
+
+  t.it("signale un mot-clé non supporté par JPA", function()
+    local r = parser.parse("findByNameRegex", FIELDS)
+    t.eq(r.errors[1].code, "unsupported_keyword")
+  end)
+
+  t.it("signale une condition incompatible avec le type du champ", function()
+    local r = parser.parse("findByAgeContaining", FIELDS)
+    t.eq(r.errors[1].code, "incompatible_type")
+  end)
+
+  t.it("signale une propriété inconnue", function()
+    local r = parser.parse("findByUnknownField", FIELDS)
+    t.eq(r.errors[1].code, "unknown_property")
+  end)
+
+  t.it("tolère une liste de champs vide sans lever d'erreur de propriété", function()
+    local r = parser.parse("findByName", {})
+    t.eq(r.predicates[1].property, "name")
+    t.eq(r.errors, {})
+  end)
+
+  t.it("associe le champ résolu au prédicat", function()
+    local r = parser.parse("findByEmail", FIELDS)
+    t.eq(r.predicates[1].field.java_type, "String")
+    t.eq(r.predicates[1].field.annotations, { "Column(unique = true)" })
+  end)
+end)
+
+t.describe("parser › états terminaux", function()
+  t.it("reste dans le sujet tant que By n'est pas tapé", function()
+    t.eq(parser.parse("find", FIELDS).state, "subject")
+    t.eq(parser.parse("findDistinct", FIELDS).state, "subject")
+  end)
+
+  t.it("attend une propriété juste après By", function()
+    t.eq(parser.parse("findBy", FIELDS).state, "expect_property")
+  end)
+
+  t.it("attend une propriété après un connecteur", function()
+    t.eq(parser.parse("findByNameAnd", FIELDS).state, "expect_property")
+    t.eq(parser.parse("findByNameOr", FIELDS).state, "expect_property")
+  end)
+
+  t.it("suit une propriété sans condition", function()
+    t.eq(parser.parse("findByName", FIELDS).state, "after_property")
+  end)
+
+  t.it("suit une condition explicite", function()
+    t.eq(parser.parse("findByNameContaining", FIELDS).state, "after_condition")
+    t.eq(parser.parse("findByAgeBetween", FIELDS).state, "after_condition")
+  end)
+
+  t.it("attend une propriété de tri après OrderBy", function()
+    t.eq(parser.parse("findByNameOrderBy", FIELDS).state, "order_property")
+  end)
+
+  t.it("attend une direction après une propriété de tri", function()
+    t.eq(parser.parse("findByNameOrderByAge", FIELDS).state, "order_direction")
+    t.eq(parser.parse("findByNameOrderByAgeAsc", FIELDS).state, "order_direction")
+  end)
+end)

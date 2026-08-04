@@ -600,3 +600,136 @@ t.describe("parser › return_type", function()
     t.eq(rt("findByEmailOrName"), "List<UserEntity>")
   end)
 end)
+
+local function labels_of(suggestions)
+  local out = {}
+  for _, s in ipairs(suggestions) do
+    out[#out + 1] = s.label
+  end
+  return out
+end
+
+local function contains(list, value)
+  for _, item in ipairs(list) do
+    if item == value then
+      return true
+    end
+  end
+  return false
+end
+
+t.describe("parser › suggestions", function()
+  local function suggest(source)
+    return parser.suggestions(parser.parse(source, FIELDS), FIELDS)
+  end
+
+  t.it("propose les champs juste après By", function()
+    local labels = labels_of(suggest("findBy"))
+    for _, name in ipairs({ "id", "name", "email", "age", "createdAt", "active", "orders" }) do
+      t.truthy(contains(labels, name), "champ manquant : " .. name)
+    end
+  end)
+
+  t.it("propose les conditions textuelles sur un champ String", function()
+    local labels = labels_of(suggest("findByName"))
+    for _, keyword in ipairs({ "Containing", "StartingWith", "EndingWith", "Like", "IsNull" }) do
+      t.truthy(contains(labels, keyword), "mot-clé manquant : " .. keyword)
+    end
+  end)
+
+  t.it("n'offre pas les conditions textuelles sur un champ numérique", function()
+    local labels = labels_of(suggest("findByAge"))
+    t.eq(contains(labels, "Containing"), false)
+    t.eq(contains(labels, "StartingWith"), false)
+    t.truthy(contains(labels, "Between"), "Between doit être proposé sur un numérique")
+    t.truthy(contains(labels, "GreaterThan"), "GreaterThan doit être proposé")
+  end)
+
+  t.it("n'offre pas Between sur un champ String", function()
+    local labels = labels_of(suggest("findByName"))
+    t.eq(contains(labels, "Between"), false)
+    t.eq(contains(labels, "After"), false)
+  end)
+
+  t.it("offre After et Before sur un champ temporel", function()
+    local labels = labels_of(suggest("findByCreatedAt"))
+    t.truthy(contains(labels, "After"), "After doit être proposé")
+    t.truthy(contains(labels, "Before"), "Before doit être proposé")
+    t.eq(contains(labels, "Containing"), false)
+  end)
+
+  t.it("offre True et False sur un booléen, mais pas IsNull sur un primitif", function()
+    local labels = labels_of(suggest("findByActive"))
+    t.truthy(contains(labels, "True"), "True doit être proposé")
+    t.truthy(contains(labels, "False"), "False doit être proposé")
+    t.eq(contains(labels, "IsNull"), false)
+  end)
+
+  t.it("offre IsEmpty sur une collection uniquement", function()
+    t.truthy(contains(labels_of(suggest("findByOrders")), "IsEmpty"), "IsEmpty attendu")
+    t.eq(contains(labels_of(suggest("findByName")), "IsEmpty"), false)
+  end)
+
+  t.it("n'offre jamais les mots-clés non supportés par JPA", function()
+    for _, source in ipairs({ "findByName", "findByAge", "findByCreatedAt", "findByOrders" }) do
+      local labels = labels_of(suggest(source))
+      for _, forbidden in ipairs({ "Regex", "Matches", "MatchesRegex", "Exists", "Near", "Within" }) do
+        t.eq(contains(labels, forbidden), false)
+      end
+    end
+  end)
+
+  t.it("offre les connecteurs et OrderBy après une propriété", function()
+    local labels = labels_of(suggest("findByName"))
+    t.truthy(contains(labels, "And"), "And attendu")
+    t.truthy(contains(labels, "Or"), "Or attendu")
+    t.truthy(contains(labels, "OrderBy"), "OrderBy attendu")
+  end)
+
+  t.it("offre IgnoreCase après une condition textuelle", function()
+    local labels = labels_of(suggest("findByNameContaining"))
+    t.truthy(contains(labels, "IgnoreCase"), "IgnoreCase attendu")
+  end)
+
+  t.it("n'offre pas IgnoreCase après une condition numérique", function()
+    local labels = labels_of(suggest("findByAgeBetween"))
+    t.eq(contains(labels, "IgnoreCase"), false)
+  end)
+
+  t.it("offre les directions après une propriété de tri", function()
+    local labels = labels_of(suggest("findByNameOrderByAge"))
+    t.truthy(contains(labels, "Asc"), "Asc attendu")
+    t.truthy(contains(labels, "Desc"), "Desc attendu")
+  end)
+
+  t.it("offre les champs après OrderBy", function()
+    local labels = labels_of(suggest("findByNameOrderBy"))
+    t.truthy(contains(labels, "age"), "champ attendu après OrderBy")
+  end)
+
+  t.it("offre les modificateurs dans le sujet", function()
+    local labels = labels_of(suggest("find"))
+    t.truthy(contains(labels, "Distinct"), "Distinct attendu")
+    t.truthy(contains(labels, "First"), "First attendu")
+    t.truthy(contains(labels, "Top"), "Top attendu")
+    t.truthy(contains(labels, "By"), "By attendu")
+  end)
+
+  t.it("n'offre pas First et Top après count", function()
+    local labels = labels_of(suggest("count"))
+    t.eq(contains(labels, "First"), false)
+    t.eq(contains(labels, "Top"), false)
+    t.truthy(contains(labels, "Distinct"), "Distinct reste proposé")
+  end)
+
+  t.it("réduit les propositions au jeu neutre sur un type inconnu", function()
+    local fields = { { name = "status", java_type = "Status", annotations = {} } }
+    local labels = labels_of(parser.suggestions(parser.parse("findByStatus", fields), fields))
+    for _, keyword in ipairs({ "Is", "Equals", "Not", "IsNull", "IsNotNull", "In", "NotIn" }) do
+      t.truthy(contains(labels, keyword), "jeu neutre incomplet : " .. keyword)
+    end
+    for _, keyword in ipairs({ "Containing", "Between", "True", "IsEmpty" }) do
+      t.eq(contains(labels, keyword), false)
+    end
+  end)
+end)

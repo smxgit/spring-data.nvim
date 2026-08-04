@@ -530,4 +530,81 @@ function M.return_type(result, entity_name, opts)
   return "List<" .. entity_name .. ">"
 end
 
+--- Traduit l'état terminal en propositions, filtrage par type appliqué.
+---
+--- Les types dont `jpa` est faux ne sont jamais proposés : REGEX et EXISTS
+--- lèveraient « Unsupported keyword » au démarrage, NEAR et WITHIN sont hors
+--- périmètre v1.
+---
+--- Le jeu neutre des types inconnus n'est pas codé ici : il découle de la
+--- colonne `accepts` de grammar.types.
+function M.suggestions(result, fields)
+  fields = fields or {}
+  local out = {}
+
+  local function add(label, kind, detail)
+    out[#out + 1] = { label = label, kind = kind, detail = detail }
+  end
+
+  local function add_fields()
+    for _, field in ipairs(fields) do
+      add(field.name, "property", field.java_type)
+    end
+  end
+
+  local state = result.state
+
+  if state == "subject" then
+    local category = result.subject and result.subject.category or "query"
+    add(grammar.distinct, "modifier", "résultats distincts")
+    if category == "query" then
+      for _, keyword in ipairs(grammar.limiting) do
+        add(keyword, "modifier", "limite le nombre de résultats")
+      end
+    end
+    add("By", "modifier", "introduit le prédicat")
+    return out
+  end
+
+  if state == "expect_property" or state == "order_property" then
+    add_fields()
+    return out
+  end
+
+  if state == "order_direction" then
+    for _, direction in ipairs(grammar.directions) do
+      add(direction, "direction", "sens du tri")
+    end
+    add_fields()
+    return out
+  end
+
+  -- after_property et after_condition
+  local last = result.predicates[#result.predicates]
+  local field = last and last.field
+  local category = field and M.categorize(field.java_type) or nil
+  local java_type = field and field.java_type or nil
+
+  if state == "after_property" and category then
+    for _, type_entry in ipairs(grammar.types) do
+      if type_entry.jpa and accepts_category(type_entry, category, java_type) then
+        for _, keyword in ipairs(type_entry.keywords) do
+          add(keyword, "keyword", type_entry.name)
+        end
+      end
+    end
+  end
+
+  if state == "after_condition" and category == "string" then
+    add("IgnoreCase", "keyword", "comparaison insensible à la casse")
+  end
+
+  for _, connector in ipairs(grammar.connectors) do
+    add(connector, "connector", "relie deux prédicats")
+  end
+  add(grammar.order_by, "connector", "clause de tri")
+
+  return out
+end
+
 return M

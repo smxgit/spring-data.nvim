@@ -134,4 +134,61 @@ M.types = {
 -- Part.Type.fromProperty qui retourne SIMPLE_PROPERTY en dernier recours.
 M.default_type = M.types[#M.types]
 
+-- Classement des types Java en catégories, base du filtrage `accepts`.
+-- Un type absent de cette table relève de la catégorie « unknown » : enum,
+-- entité liée, type personnalisé. Le classement effectif est réalisé par
+-- parser.categorize, ce module ne contenant aucune fonction.
+M.categories = {
+  ["String"] = "string",
+  ["char"] = "string",
+  ["Character"] = "string",
+
+  ["int"] = "numeric",
+  ["long"] = "numeric",
+  ["short"] = "numeric",
+  ["byte"] = "numeric",
+  ["float"] = "numeric",
+  ["double"] = "numeric",
+  ["Integer"] = "numeric",
+  ["Long"] = "numeric",
+  ["Short"] = "numeric",
+  ["Byte"] = "numeric",
+  ["Float"] = "numeric",
+  ["Double"] = "numeric",
+  ["BigDecimal"] = "numeric",
+  ["BigInteger"] = "numeric",
+
+  ["LocalDate"] = "temporal",
+  ["LocalTime"] = "temporal",
+  ["LocalDateTime"] = "temporal",
+  ["Instant"] = "temporal",
+  ["ZonedDateTime"] = "temporal",
+  ["OffsetDateTime"] = "temporal",
+  ["Date"] = "temporal",
+  ["Timestamp"] = "temporal",
+  ["Year"] = "temporal",
+  ["YearMonth"] = "temporal",
+
+  ["boolean"] = "boolean",
+  ["Boolean"] = "boolean",
+}
+
+-- Conteneurs reconnus comme catégorie « collection » lorsqu'ils portent des
+-- paramètres génériques : List<T>, Set<T>, Collection<T>.
+M.collection_types = { "List", "Set", "Collection" }
+
+-- Un primitif ne peut jamais être null : IsNull / IsNotNull sont exclus,
+-- indépendamment de la catégorie. `boolean` et `Boolean` partagent la
+-- catégorie « boolean » mais seul le second accepte IsNull.
+M.primitives = {
+  ["int"] = true,
+  ["long"] = true,
+  ["short"] = true,
+  ["byte"] = true,
+  ["float"] = true,
+  ["double"] = true,
+  ["char"] = true,
+  ["boolean"] = true,
+}
+
 return M

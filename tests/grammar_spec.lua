@@ -165,3 +165,49 @@ t.describe("grammar › types de conditions", function()
     t.eq(by_name["SIMPLE_PROPERTY"].requires_nullable, nil)
   end)
 end)
+
+t.describe("grammar › catégories de types Java", function()
+  t.it("classe les types textuels", function()
+    t.eq(grammar.categories["String"], "string")
+    t.eq(grammar.categories["char"], "string")
+    t.eq(grammar.categories["Character"], "string")
+  end)
+
+  t.it("classe les types numériques, primitifs et wrappers", function()
+    for _, name in ipairs({
+      "int", "long", "short", "byte", "float", "double",
+      "Integer", "Long", "Short", "Byte", "Float", "Double",
+      "BigDecimal", "BigInteger",
+    }) do
+      t.eq(grammar.categories[name], "numeric")
+    end
+  end)
+
+  t.it("classe les types temporels", function()
+    for _, name in ipairs({
+      "LocalDate", "LocalTime", "LocalDateTime", "Instant",
+      "ZonedDateTime", "OffsetDateTime", "Date", "Timestamp",
+      "Year", "YearMonth",
+    }) do
+      t.eq(grammar.categories[name], "temporal")
+    end
+  end)
+
+  t.it("classe les booléens", function()
+    t.eq(grammar.categories["boolean"], "boolean")
+    t.eq(grammar.categories["Boolean"], "boolean")
+  end)
+
+  t.it("ne classe pas les types inconnus", function()
+    t.eq(grammar.categories["UserEntity"], nil)
+    t.eq(grammar.categories["Status"], nil)
+  end)
+
+  t.it("liste les conteneurs et les primitifs", function()
+    t.eq(grammar.collection_types, { "List", "Set", "Collection" })
+    t.eq(grammar.primitives["int"], true)
+    t.eq(grammar.primitives["boolean"], true)
+    t.eq(grammar.primitives["Integer"], nil)
+    t.eq(grammar.primitives["String"], nil)
+  end)
+end)

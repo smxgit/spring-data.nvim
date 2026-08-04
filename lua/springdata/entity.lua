@@ -82,10 +82,44 @@ local uri_index = {}
 -- d'en déclencher deux, et sont toutes deux résolues à la réponse unique.
 local pending = {}
 
---- Requête treesitter isolant chaque déclaration de champ.
-local FIELDS_QUERY = [[
-(field_declaration) @field
+--- Requête treesitter localisant une classe par son nom simple et son corps.
+--- Le nom est filtré après coup (égalité stricte avec l'entité recherchée) :
+--- la requête elle-même matche n'importe quelle classe, y compris les
+--- classes imbriquées (clé composite @Embeddable, par exemple), mais comme
+--- un nom de classe simple est unique dans un fichier Java, filtrer par
+--- égalité isole sans ambiguïté le corps de la bonne classe.
+local CLASS_QUERY = [[
+(class_declaration
+  name: (identifier) @name
+  body: (class_body) @body)
 ]]
+
+--- Corps (class_body) de la classe portant le nom `entity_name`, ou nil si
+--- introuvable dans l'arbre.
+local function find_class_body(root, bufnr, entity_name)
+  local query_ok, query = pcall(vim.treesitter.query.parse, "java", CLASS_QUERY)
+  if not query_ok then
+    return nil
+  end
+
+  for _, match in query:iter_matches(root, bufnr, 0, -1) do
+    local name_text, body_node
+    for id, nodes in pairs(match) do
+      local node = type(nodes) == "table" and nodes[1] or nodes
+      local capture = query.captures[id]
+      if capture == "name" then
+        name_text = vim.treesitter.get_node_text(node, bufnr)
+      elseif capture == "body" then
+        body_node = node
+      end
+    end
+    if name_text == entity_name and body_node then
+      return body_node
+    end
+  end
+
+  return nil
+end
 
 --- Nom simple d'une annotation, avec ses arguments éventuels, sans
 --- qualification de paquetage : « @jakarta.persistence.Id » devient « Id »,
@@ -113,72 +147,92 @@ local function annotation_text(node, bufnr)
   return simple
 end
 
---- Extrait les champs d'un buffer Java : nom, type et annotations.
---- Les annotations et modificateurs (static, transient) vivent dans le
---- nœud `modifiers` du `field_declaration` — documentSymbol ne les
---- remonterait pas, d'où le passage par treesitter sur le buffer réel.
-local function extract_fields(bufnr)
+--- Extrait les champs déclarés directement dans un `field_declaration`,
+--- annotations et modificateurs compris.
+local function fields_of_declaration(node, bufnr)
+  local java_type
+  local annotations = {}
+  local names = {}
+  local skip = false
+
+  for child in node:iter_children() do
+    local kind = child:type()
+    if kind == "modifiers" then
+      for modifier in child:iter_children() do
+        local mtype = modifier:type()
+        if mtype == "annotation" or mtype == "marker_annotation" then
+          local text = annotation_text(modifier, bufnr)
+          if text then
+            annotations[#annotations + 1] = text
+          end
+        elseif mtype == "static" or mtype == "transient" then
+          -- Un champ statique ou transient n'est pas persisté : il ne doit
+          -- pas être proposé.
+          skip = true
+        end
+      end
+    elseif kind == "variable_declarator" then
+      local name_node = child:field("name")[1]
+      if name_node then
+        names[#names + 1] = vim.treesitter.get_node_text(name_node, bufnr)
+      end
+    elseif java_type == nil then
+      -- Premier enfant qui n'est ni les modificateurs ni un déclarateur :
+      -- c'est le nœud de type (type_identifier, generic_type, etc.).
+      java_type = vim.treesitter.get_node_text(child, bufnr)
+    end
+  end
+
+  if skip or not java_type then
+    return {}
+  end
+
+  -- `private String a, b;` déclare plusieurs champs dans un seul
+  -- field_declaration : un par déclarateur, type et annotations partagés.
+  local out = {}
+  for _, name in ipairs(names) do
+    out[#out + 1] = { name = name, java_type = java_type, annotations = annotations }
+  end
+  return out
+end
+
+--- Extrait les champs de la classe `entity_name` dans un buffer Java : nom,
+--- type et annotations. Les annotations et modificateurs (static,
+--- transient) vivent dans le nœud `modifiers` du `field_declaration` —
+--- documentSymbol ne les remonterait pas, d'où le passage par treesitter
+--- sur le buffer réel.
+---
+--- Ne parcourt que les `field_declaration` enfants directs du corps de
+--- cette classe précise : une requête non bornée matcherait aussi les
+--- champs d'une classe imbriquée (clé composite @Embeddable, par exemple)
+--- et les ferait fuir dans les propositions de complétion.
+---
+--- Retourne nil si la classe `entity_name` est introuvable dans l'arbre —
+--- distinct d'une liste vide, qui signifie « classe trouvée, zéro champ
+--- persistable » et qui est un résultat légitime à mettre en cache. Le nil
+--- ne doit jamais être mis en cache : il permettra une nouvelle tentative
+--- au prochain appel.
+local function extract_fields(bufnr, entity_name)
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr, "java")
   if not ok or not parser then
-    return {}
+    return nil
   end
 
   local tree = parser:parse()[1]
   if not tree then
-    return {}
+    return nil
   end
 
-  local query_ok, query = pcall(vim.treesitter.query.parse, "java", FIELDS_QUERY)
-  if not query_ok then
-    return {}
+  local body = find_class_body(tree:root(), bufnr, entity_name)
+  if not body then
+    return nil
   end
 
   local fields = {}
-
-  for _, node in query:iter_captures(tree:root(), bufnr, 0, -1) do
-    local java_type
-    local annotations = {}
-    local names = {}
-    local skip = false
-
-    for child in node:iter_children() do
-      local kind = child:type()
-      if kind == "modifiers" then
-        for modifier in child:iter_children() do
-          local mtype = modifier:type()
-          if mtype == "annotation" or mtype == "marker_annotation" then
-            local text = annotation_text(modifier, bufnr)
-            if text then
-              annotations[#annotations + 1] = text
-            end
-          elseif mtype == "static" or mtype == "transient" then
-            -- Un champ statique ou transient n'est pas persisté : il ne
-            -- doit pas être proposé.
-            skip = true
-          end
-        end
-      elseif kind == "variable_declarator" then
-        local name_node = child:field("name")[1]
-        if name_node then
-          names[#names + 1] = vim.treesitter.get_node_text(name_node, bufnr)
-        end
-      elseif java_type == nil then
-        -- Premier enfant qui n'est ni les modificateurs ni un déclarateur :
-        -- c'est le nœud de type (type_identifier, generic_type, etc.).
-        java_type = vim.treesitter.get_node_text(child, bufnr)
-      end
-    end
-
-    if not skip and java_type then
-      -- `private String a, b;` déclare plusieurs champs dans un seul
-      -- field_declaration : un par déclarateur, type et annotations
-      -- partagés.
-      for _, name in ipairs(names) do
-        fields[#fields + 1] = {
-          name = name,
-          java_type = java_type,
-          annotations = annotations,
-        }
+  for child in body:iter_children() do
+    if child:type() == "field_declaration" then
+      for _, field in ipairs(fields_of_declaration(child, bufnr)) do
+        fields[#fields + 1] = field
       end
     end
   end
@@ -186,11 +240,23 @@ local function extract_fields(bufnr)
   return fields
 end
 
---- Charge le fichier d'une URI dans un buffer et en extrait les champs.
-local function fields_from_uri(uri)
-  local bufnr = vim.uri_to_bufnr(uri)
-  vim.fn.bufload(bufnr)
-  return extract_fields(bufnr)
+--- Charge le fichier d'une URI dans un buffer et en extrait les champs de
+--- la classe `entity_name`. Retourne nil (jamais mis en cache par
+--- l'appelant) si le buffer n'a pas pu être chargé — fichier supprimé,
+--- document virtuel `jdt://` d'un jar dont le contenu n'est pas
+--- accessible tel quel, etc.
+local function fields_from_uri(uri, entity_name)
+  local uri_ok, bufnr = pcall(vim.uri_to_bufnr, uri)
+  if not uri_ok or not bufnr then
+    return nil
+  end
+
+  local load_ok = pcall(vim.fn.bufload, bufnr)
+  if not load_ok or not vim.api.nvim_buf_is_loaded(bufnr) then
+    return nil
+  end
+
+  return extract_fields(bufnr, entity_name)
 end
 
 --- Récupère les champs d'une entité, en passant par le cache.
@@ -202,10 +268,11 @@ function M.fields(entity_name, callback)
     return
   end
 
-  if pending[entity_name] then
+  local waiters = pending[entity_name]
+  if waiters then
     -- Une requête est déjà en vol pour cette entité : on s'accroche à sa
     -- réponse plutôt que d'en émettre une seconde.
-    table.insert(pending[entity_name], callback)
+    waiters[#waiters + 1] = callback
     return
   end
 
@@ -215,19 +282,33 @@ function M.fields(entity_name, callback)
     return
   end
 
-  pending[entity_name] = { callback }
+  waiters = { callback }
+  pending[entity_name] = waiters
 
-  local function resolve(fields)
-    local waiters = pending[entity_name]
-    pending[entity_name] = nil
-    for _, cb in ipairs(waiters or {}) do
+  -- `waiters` identifie cette requête précise : si `M.invalidate` a
+  -- entre-temps décroché `pending[entity_name]` (parce que jdtls a planté
+  -- ou a été redémarré sans jamais répondre — la requête ne rappellera
+  -- alors jamais, et sans ce décrochage `pending[entity_name]` resterait
+  -- occupé pour toujours, empêchant toute nouvelle tentative), une réponse
+  -- tardive et orpheline de cette requête sert quand même ses propres
+  -- callbacks en attente, mais ne touche ni au cache ni à `pending`, qui
+  -- appartiennent désormais à une éventuelle requête plus récente.
+  local function resolve(fields, ok)
+    fields = fields or {}
+    if pending[entity_name] == waiters then
+      pending[entity_name] = nil
+      if ok then
+        cache[entity_name] = fields
+      end
+    end
+    for _, cb in ipairs(waiters) do
       cb(fields)
     end
   end
 
   clients[1]:request("workspace/symbol", { query = entity_name }, function(err, results)
     if err or not results or #results == 0 then
-      resolve({})
+      resolve(nil, false)
       return
     end
 
@@ -240,24 +321,38 @@ function M.fields(entity_name, callback)
     end
 
     if not uri then
-      resolve({})
+      resolve(nil, false)
       return
     end
 
-    local fields = fields_from_uri(uri)
-    cache[entity_name] = fields
+    local fields = fields_from_uri(uri, entity_name)
+    if fields == nil then
+      -- Extraction échouée (fichier introuvable, URI jdt:// illisible,
+      -- classe absente de l'arbre…) : ne jamais mettre ce résultat en
+      -- cache, pour qu'un appel ultérieur retente au lieu de rester
+      -- bloqué sur un résultat vide indéfiniment — aucun BufWritePost ne
+      -- viendrait jamais l'invalider.
+      resolve(nil, false)
+      return
+    end
+
     uri_index[vim.uri_to_fname(uri)] = entity_name
-    resolve(fields)
+    resolve(fields, true)
   end)
 end
 
 --- Vide l'entrée de cache d'une entité, ou tout le cache si aucun nom donné.
+--- Décroche aussi `pending` : une requête en vol qui ne répondra jamais
+--- (jdtls planté ou redémarré) ne doit pas bloquer les appels suivants
+--- indéfiniment — `M.invalidate` est le mécanisme de reprise.
 function M.invalidate(entity_name)
   if entity_name then
     cache[entity_name] = nil
+    pending[entity_name] = nil
   else
     cache = {}
     uri_index = {}
+    pending = {}
   end
 end
 

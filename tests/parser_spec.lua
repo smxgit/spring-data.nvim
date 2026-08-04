@@ -460,6 +460,48 @@ t.describe("parser › parse", function()
     t.eq(r.errors[1].code, "unknown_property")
   end)
 
+  -- JpaQueryCreator.upperIfIgnoreCase : « Unable to ignore case of int
+  -- types, the property 'age' must reference a String ». Sans cette
+  -- vérification, la source proposait une signature qui empêche
+  -- l'application de démarrer.
+  t.it("signale IgnoreCase sur un champ non textuel", function()
+    local r = parser.parse("findByAgeIgnoreCase", FIELDS)
+    t.eq(r.errors, { { code = "incompatible_type", message = "IgnoreCase ne s'applique pas à int" } })
+  end)
+
+  t.it("accepte IgnoreCase sur un champ textuel", function()
+    t.eq(parser.parse("findByNameIgnoreCase", FIELDS).errors, {})
+    t.eq(parser.parse("findByNameContainingIgnoreCase", FIELDS).errors, {})
+  end)
+
+  -- AllIgnor(ing|e)Case donne IgnoreCaseType.WHEN_POSSIBLE aux parts, et
+  -- cette branche de upperIfIgnoreCase n'applique upper() que si le type
+  -- s'y prête : elle ne lève jamais. La signaler serait une fausse erreur.
+  t.it("ne signale pas AllIgnoreCase sur un champ non textuel", function()
+    t.eq(parser.parse("findByNameAndAgeAllIgnoreCase", FIELDS).errors, {})
+  end)
+
+  t.it("signale une propriété de tri inconnue", function()
+    local r = parser.parse("findByNameOrderByBogusAsc", FIELDS)
+    t.eq(r.errors, { { code = "unknown_property", message = "propriété de tri inconnue : bogus" } })
+  end)
+
+  t.it("signale une propriété de tri manquante", function()
+    local r = parser.parse("findByNameOrderByAsc", FIELDS)
+    t.eq(r.errors[1].code, "missing_order_property")
+    -- Faute structurelle : détectable même sans liste de champs.
+    t.eq(parser.parse("findByNameOrderByAsc", {}).errors[1].code, "missing_order_property")
+  end)
+
+  t.it("valide chaque propriété de tri d'une clause multiple", function()
+    t.eq(parser.parse("findByNameOrderByAgeAscIdDesc", FIELDS).errors, {})
+    t.eq(#parser.parse("findByNameOrderByAgeAscBogusDesc", FIELDS).errors, 1)
+  end)
+
+  t.it("ne valide pas les propriétés de tri sans liste de champs", function()
+    t.eq(parser.parse("findByNameOrderByBogusAsc", {}).errors, {})
+  end)
+
   t.it("tolère une liste de champs vide sans lever d'erreur de propriété", function()
     local r = parser.parse("findByName", {})
     t.eq(r.predicates[1].property, "name")

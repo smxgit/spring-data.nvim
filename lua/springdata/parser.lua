@@ -301,6 +301,33 @@ local function parse_order_by(clause)
   return out
 end
 
+--- Valide les propriétés de tri contre la liste des champs.
+---
+--- Spring résout chaque propriété de tri par PropertyPath exactement comme
+--- celles du prédicat : « findByNameOrderByBogusAsc » lève une
+--- PropertyReferenceException au démarrage du contexte. Sans cette
+--- vérification, la source proposerait une signature qui empêche
+--- l'application de démarrer, ce que §7 interdit.
+---
+--- Une propriété vide (« findByNameOrderByAsc ») est signalée quelle que
+--- soit la liste des champs : la faute est structurelle, pas une question de
+--- résolution, et reste donc détectable quand la validation est dégradée.
+local function validate_order_by(order_by, fields, errors)
+  for _, entry in ipairs(order_by) do
+    if entry.property == "" then
+      errors[#errors + 1] = {
+        code = "missing_order_property",
+        message = "propriété de tri manquante avant " .. (entry.direction or "la fin"),
+      }
+    elseif #fields > 0 and not find_field(fields, entry.property) then
+      errors[#errors + 1] = {
+        code = "unknown_property",
+        message = "propriété de tri inconnue : " .. entry.property,
+      }
+    end
+  end
+end
+
 --- Portion du groupe médian du sujet qui n'a encore été reconnue ni comme
 --- Distinct ni comme First/Top : c'est ce que l'utilisateur est en train de
 --- taper (« Dist » dans « findDist », « Fir » dans « findDistinctFir »).
@@ -475,6 +502,7 @@ function M.parse(source, fields)
   local has_order_by = #order_segments > 1
   if has_order_by then
     result.order_by = parse_order_by(order_segments[2])
+    validate_order_by(result.order_by, fields, result.errors)
   end
 
   local or_segments = compact(M.split_on_keyword(order_segments[1], "Or"))
@@ -525,6 +553,24 @@ function M.parse(source, fields)
             message = type_entry.name .. " ne s'applique pas à " .. field.java_type,
           }
         end
+      end
+
+      -- IgnoreCase explicite sur un champ qui n'est pas une String : JPA
+      -- refuse au démarrage. Part.detectAndSetIgnoreCase donne le type
+      -- ALWAYS, que JpaQueryCreator.upperIfIgnoreCase traduit par un
+      -- Assert.state — « Unable to ignore case of int types, the property
+      -- 'age' must reference a String ».
+      --
+      -- AllIgnor(ing|e)Case en est délibérément exclu : PartTree.Predicate
+      -- le propage aux parts sous la forme WHEN_POSSIBLE, branche qui
+      -- n'applique upper() que si le type s'y prête et ne lève jamais.
+      -- Signaler les deux formes de la même manière produirait une erreur
+      -- pour une chaîne que Spring accepte.
+      if field and ignore_case and M.categorize(field.java_type) ~= "string" then
+        result.errors[#result.errors + 1] = {
+          code = "incompatible_type",
+          message = "IgnoreCase ne s'applique pas à " .. field.java_type,
+        }
       end
 
       result.predicates[#result.predicates + 1] = {

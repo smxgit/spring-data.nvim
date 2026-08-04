@@ -556,6 +556,11 @@ function M.suggestions(result, fields)
 
   if state == "subject" then
     local category = result.subject and result.subject.category or "query"
+    if not result.subject then
+      for _, intro in ipairs(grammar.introducers) do
+        add(intro.keyword, "modifier", intro.category)
+      end
+    end
     add(grammar.distinct, "modifier", "résultats distincts")
     if category == "query" then
       for _, keyword in ipairs(grammar.limiting) do

@@ -715,6 +715,24 @@ t.describe("parser › suggestions", function()
     t.truthy(contains(labels, "By"), "By attendu")
   end)
 
+  t.it("propose les introducteurs tant qu'aucun n'est reconnu", function()
+    for _, source in ipairs({ "", "fin" }) do
+      local labels = labels_of(suggest(source))
+      for _, keyword in ipairs({ "find", "count", "exists", "delete" }) do
+        t.truthy(contains(labels, keyword), "introducteur manquant pour '" .. source .. "' : " .. keyword)
+      end
+    end
+  end)
+
+  t.it("n'offre plus les introducteurs une fois l'un d'eux reconnu", function()
+    local labels = labels_of(suggest("find"))
+    t.eq(contains(labels, "find"), false)
+    t.truthy(contains(labels, "Distinct"), "Distinct attendu")
+    t.truthy(contains(labels, "First"), "First attendu")
+    t.truthy(contains(labels, "Top"), "Top attendu")
+    t.truthy(contains(labels, "By"), "By attendu")
+  end)
+
   t.it("n'offre pas First et Top après count", function()
     local labels = labels_of(suggest("count"))
     t.eq(contains(labels, "First"), false)

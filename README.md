@@ -53,6 +53,9 @@ sources = {
 |---|---|---|
 | `delete_return_type` | `"void"` | Type de retour des méthodes `deleteBy` / `removeBy`. `"long"` pour renvoyer le nombre de lignes supprimées. |
 
+Ces options se déclarent dans `setup{}`. Elles peuvent aussi l'être sur le provider
+blink, via sa clé `opts`, qui l'emporte alors sur `setup{}`.
+
 ## Type de retour
 
 | Cas | Type |
@@ -101,5 +104,10 @@ luajit tests/run.lua
 ```
 
 `grammar.lua` et `parser.lua` ne référencent jamais `vim` : la suite s'exécute sans
-Neovim. `entity.lua` et `source.lua` se vérifient à la main dans un projet Spring
+Neovim. `source.lua` non plus en dehors du corps de `enabled` et `get_completions`,
+si bien que ses fonctions pures — préfixe courant, composition du texte inséré,
+snippet, fusion des options — sont couvertes par la même suite. Ces références à
+`vim` ne doivent jamais remonter au niveau du chargement du module.
+
+`entity.lua` et le reste de `source.lua` se vérifient à la main dans un projet Spring
 Boot.

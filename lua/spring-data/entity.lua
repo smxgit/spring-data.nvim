@@ -74,6 +74,14 @@ end
 
 -- Cache des champs, indexé par nom d'entité. Invalidé sur BufWritePost du
 -- fichier de l'entité, via setup_autocmds.
+--
+-- `uri_index` associe un NUMÉRO DE BUFFER (pas un chemin) à l'entité qu'il
+-- contient : `args.file` d'un autocmd BufWritePost reflète tel quel la
+-- façon dont le buffer a été ouvert — relatif si ouvert via un chercheur
+-- flou ou un chemin relatif — alors que l'URI renvoyée par jdtls est
+-- toujours absolue. Les deux chaînes ne coïncidaient donc presque jamais,
+-- et l'invalidation ne se déclenchait pas. Le numéro de buffer est stable
+-- et indépendant de toute représentation textuelle du chemin.
 local cache = {}
 local uri_index = {}
 
@@ -241,10 +249,11 @@ local function extract_fields(bufnr, entity_name)
 end
 
 --- Charge le fichier d'une URI dans un buffer et en extrait les champs de
---- la classe `entity_name`. Retourne nil (jamais mis en cache par
+--- la classe `entity_name`. Retourne `nil` (jamais mis en cache par
 --- l'appelant) si le buffer n'a pas pu être chargé — fichier supprimé,
 --- document virtuel `jdt://` d'un jar dont le contenu n'est pas
---- accessible tel quel, etc.
+--- accessible tel quel, etc. Retourne aussi le `bufnr` résolu : l'appelant
+--- en a besoin pour indexer `uri_index` sans jamais repasser par un chemin.
 local function fields_from_uri(uri, entity_name)
   local uri_ok, bufnr = pcall(vim.uri_to_bufnr, uri)
   if not uri_ok or not bufnr then
@@ -256,7 +265,7 @@ local function fields_from_uri(uri, entity_name)
     return nil
   end
 
-  return extract_fields(bufnr, entity_name)
+  return extract_fields(bufnr, entity_name), bufnr
 end
 
 --- Récupère les champs d'une entité, en passant par le cache.
@@ -342,7 +351,7 @@ function M.fields(entity_name, callback)
       return
     end
 
-    local fields = fields_from_uri(uri, entity_name)
+    local fields, bufnr = fields_from_uri(uri, entity_name)
     if fields == nil then
       -- Extraction échouée (fichier introuvable, URI jdt:// illisible,
       -- classe absente de l'arbre…) : ne jamais mettre ce résultat en
@@ -353,7 +362,7 @@ function M.fields(entity_name, callback)
       return
     end
 
-    uri_index[vim.uri_to_fname(uri)] = entity_name
+    uri_index[bufnr] = entity_name
     resolve(fields, true)
   end
 
@@ -392,7 +401,7 @@ function M.setup_autocmds()
     group = group,
     pattern = "*.java",
     callback = function(args)
-      local entity_name = uri_index[args.file]
+      local entity_name = uri_index[args.buf]
       if entity_name then
         M.invalidate(entity_name)
       end

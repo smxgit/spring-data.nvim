@@ -1,4 +1,4 @@
--- Mini framework de test. Aucune dépendance : doit tourner sous `luajit` nu.
+-- Minimal test framework. No dependencies: must run under bare `luajit`.
 local M = {}
 
 local current_suite = nil
@@ -25,8 +25,8 @@ local function deep_equal(a, b)
   return true
 end
 
--- Rend une valeur lisible dans un message d'échec, clés triées pour un
--- affichage déterministe.
+-- Renders a value legibly in a failure message, keys sorted for
+-- deterministic output.
 local function render(value, indent)
   indent = indent or ""
   if type(value) == "string" then
@@ -71,21 +71,21 @@ end
 
 function M.eq(actual, expected)
   if not deep_equal(actual, expected) then
-    error("attendu :\n" .. render(expected) .. "\n\nobtenu :\n" .. render(actual), 2)
+    error("expected:\n" .. render(expected) .. "\n\ngot:\n" .. render(actual), 2)
   end
 end
 
 function M.truthy(value, message)
   if not value then
-    error(message or "valeur fausse ou nil", 2)
+    error(message or "false or nil value", 2)
   end
 end
 
 function M.report()
   for _, f in ipairs(failures) do
-    io.write("ÉCHEC  ", f.label, "\n", f.err, "\n\n")
+    io.write("FAIL  ", f.label, "\n", f.err, "\n\n")
   end
-  io.write(string.format("%d réussis, %d échoués\n", stats.passed, stats.failed))
+  io.write(string.format("%d passed, %d failed\n", stats.passed, stats.failed))
   return stats.failed == 0
 end
 

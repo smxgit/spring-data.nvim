@@ -2,84 +2,84 @@ local t = require("harness")
 local parser = require("spring-data.parser")
 
 t.describe("parser › split_on_keyword", function()
-  t.it("découpe quand le mot-clé est suivi d'une majuscule", function()
+  t.it("splits when the keyword is followed by an uppercase letter", function()
     t.eq(parser.split_on_keyword("NameAndAge", "And"), { "Name", "Age" })
   end)
 
-  t.it("ne découpe pas quand la suite est en minuscule", function()
+  t.it("does not split when followed by lowercase", function()
     t.eq(parser.split_on_keyword("andrewAge", "And"), { "andrewAge" })
     t.eq(parser.split_on_keyword("AndrewAge", "And"), { "AndrewAge" })
   end)
 
-  t.it("ne découpe que sur les occurrences valides", function()
+  t.it("only splits on valid occurrences", function()
     t.eq(parser.split_on_keyword("AndrewAndAge", "And"), { "Andrew", "Age" })
   end)
 
-  t.it("ne découpe pas sur un mot-clé en fin de chaîne", function()
+  t.it("does not split on a keyword at the end of the string", function()
     t.eq(parser.split_on_keyword("NameAnd", "And"), { "NameAnd" })
   end)
 
-  t.it("produit un segment vide en tête comme le split de Java", function()
+  t.it("produces a leading empty segment like Java's split", function()
     t.eq(parser.split_on_keyword("AndId", "And"), { "", "Id" })
   end)
 
-  t.it("gère les occurrences multiples", function()
+  t.it("handles multiple occurrences", function()
     t.eq(parser.split_on_keyword("AAndBAndC", "And"), { "A", "B", "C" })
   end)
 
-  t.it("renvoie la chaîne intacte en l'absence du mot-clé", function()
+  t.it("returns the string unchanged when the keyword is absent", function()
     t.eq(parser.split_on_keyword("Name", "And"), { "Name" })
   end)
 end)
 
 t.describe("parser › ends_with", function()
-  t.it("reconnaît un suffixe", function()
+  t.it("recognises a suffix", function()
     t.eq(parser.ends_with("ageBetween", "Between"), true)
   end)
 
-  t.it("rejette un non-suffixe", function()
+  t.it("rejects a non-suffix", function()
     t.eq(parser.ends_with("ageLessThanEqual", "LessThan"), false)
     t.eq(parser.ends_with("ageLessThanEqual", "LessThanEqual"), true)
   end)
 
-  t.it("rejette un suffixe plus long que la chaîne", function()
+  t.it("rejects a suffix longer than the string", function()
     t.eq(parser.ends_with("Is", "IsNotNull"), false)
   end)
 end)
 
 t.describe("parser › decapitalize", function()
-  t.it("abaisse la première lettre", function()
+  t.it("lowercases the first letter", function()
     t.eq(parser.decapitalize("Name"), "name")
   end)
 
-  t.it("préserve les acronymes comme Introspector.decapitalize", function()
+  t.it("preserves acronyms like Introspector.decapitalize", function()
     t.eq(parser.decapitalize("URL"), "URL")
     t.eq(parser.decapitalize("ID"), "ID")
   end)
 
-  t.it("laisse une chaîne vide intacte", function()
+  t.it("leaves an empty string unchanged", function()
     t.eq(parser.decapitalize(""), "")
   end)
 
-  t.it("laisse une chaîne déjà en minuscule intacte", function()
+  t.it("leaves an already-lowercase string unchanged", function()
     t.eq(parser.decapitalize("name"), "name")
   end)
 end)
 
 t.describe("parser › strip_ignore_case", function()
-  t.it("retire IgnoreCase et le signale", function()
+  t.it("strips IgnoreCase and reports it", function()
     local part, found = parser.strip_ignore_case("nameContainingIgnoreCase")
     t.eq(part, "nameContaining")
     t.eq(found, true)
   end)
 
-  t.it("retire la variante IgnoringCase", function()
+  t.it("strips the IgnoringCase variant", function()
     local part, found = parser.strip_ignore_case("nameIgnoringCase")
     t.eq(part, "name")
     t.eq(found, true)
   end)
 
-  t.it("ne signale rien en l'absence du motif", function()
+  t.it("reports nothing when the pattern is absent", function()
     local part, found = parser.strip_ignore_case("nameContaining")
     t.eq(part, "nameContaining")
     t.eq(found, false)
@@ -87,31 +87,31 @@ t.describe("parser › strip_ignore_case", function()
 end)
 
 t.describe("parser › categorize", function()
-  t.it("classe les types connus", function()
+  t.it("classifies known types", function()
     t.eq(parser.categorize("String"), "string")
     t.eq(parser.categorize("int"), "numeric")
     t.eq(parser.categorize("LocalDate"), "temporal")
     t.eq(parser.categorize("Boolean"), "boolean")
   end)
 
-  t.it("reconnaît les conteneurs génériques", function()
+  t.it("recognises generic containers", function()
     t.eq(parser.categorize("List<Order>"), "collection")
     t.eq(parser.categorize("Set<String>"), "collection")
     t.eq(parser.categorize("Collection<Long>"), "collection")
   end)
 
-  t.it("classe en unknown les enums et entités liées", function()
+  t.it("classifies enums and related entities as unknown", function()
     t.eq(parser.categorize("Status"), "unknown")
     t.eq(parser.categorize("AddressEntity"), "unknown")
   end)
 
-  t.it("ignore les paramètres génériques d'un type non conteneur", function()
+  t.it("ignores generic parameters of a non-container type", function()
     t.eq(parser.categorize("Optional<String>"), "unknown")
   end)
 end)
 
 t.describe("parser › parse_subject", function()
-  t.it("reconnaît un sujet minimal", function()
+  t.it("recognises a minimal subject", function()
     local subject, predicate = parser.parse_subject("findByName")
     t.eq(subject.introducer, "find")
     t.eq(subject.category, "query")
@@ -121,7 +121,7 @@ t.describe("parser › parse_subject", function()
     t.eq(predicate, "Name")
   end)
 
-  t.it("reconnaît toutes les catégories d'introducteurs", function()
+  t.it("recognises every introducer category", function()
     t.eq(parser.parse_subject("countByName").category, "count")
     t.eq(parser.parse_subject("existsByName").category, "exists")
     t.eq(parser.parse_subject("deleteByName").category, "delete")
@@ -129,63 +129,63 @@ t.describe("parser › parse_subject", function()
     t.eq(parser.parse_subject("streamByName").category, "query")
   end)
 
-  t.it("accepte un type de domaine entre l'introducteur et By", function()
+  t.it("accepts a domain type between the introducer and By", function()
     local subject, predicate = parser.parse_subject("findUserByName")
     t.eq(subject.introducer, "find")
     t.eq(predicate, "Name")
   end)
 
-  t.it("détecte Distinct", function()
+  t.it("detects Distinct", function()
     local subject = parser.parse_subject("findDistinctByName")
     t.eq(subject.distinct, true)
   end)
 
-  t.it("détecte First et Top sans nombre comme une limite de 1", function()
+  t.it("detects First and Top without a number as a limit of 1", function()
     t.eq(parser.parse_subject("findFirstByName").max_results, 1)
     t.eq(parser.parse_subject("findTopByName").max_results, 1)
   end)
 
-  t.it("détecte First et Top avec un nombre", function()
+  t.it("detects First and Top with a number", function()
     t.eq(parser.parse_subject("findFirst10ByName").max_results, 10)
     t.eq(parser.parse_subject("findTop5ByName").max_results, 5)
   end)
 
-  t.it("accepte Distinct avant First, dans l'ordre imposé par Spring", function()
+  t.it("accepts Distinct before First, in the order Spring imposes", function()
     local subject = parser.parse_subject("findDistinctTop5ByName")
     t.eq(subject.distinct, true)
     t.eq(subject.max_results, 5)
   end)
 
-  t.it("n'applique pas la limitation aux catégories count, exists et delete", function()
+  t.it("does not apply the limit to count, exists and delete categories", function()
     t.eq(parser.parse_subject("countByName").max_results, nil)
     t.eq(parser.parse_subject("existsByName").max_results, nil)
     t.eq(parser.parse_subject("deleteByName").max_results, nil)
   end)
 
-  t.it("détecte Distinct sur count malgré l'absence de limitation", function()
+  t.it("detects Distinct on count despite no limiting", function()
     local subject = parser.parse_subject("countDistinctByName")
     t.eq(subject.distinct, true)
     t.eq(subject.max_results, nil)
   end)
 
-  t.it("signale un sujet encore incomplet", function()
+  t.it("reports a still-incomplete subject", function()
     local subject, predicate = parser.parse_subject("findDistinct")
     t.eq(subject.has_by, false)
     t.eq(predicate, nil)
   end)
 
-  t.it("retient le premier By, le groupe médian étant réticent", function()
+  t.it("keeps the first By, the middle group being reluctant", function()
     local _, predicate = parser.parse_subject("findByStandByFlag")
     t.eq(predicate, "StandByFlag")
   end)
 
-  t.it("rejette un By en minuscule, comme le motif Java", function()
+  t.it("rejects a lowercase by, like the Java pattern does", function()
     local subject, predicate = parser.parse_subject("findbyName")
     t.eq(subject.has_by, false)
     t.eq(predicate, nil)
   end)
 
-  t.it("renvoie nil si aucun introducteur ne correspond", function()
+  t.it("returns nil if no introducer matches", function()
     t.eq(parser.parse_subject("fetchByName"), nil)
   end)
 end)
@@ -196,44 +196,44 @@ t.describe("parser › detect_type", function()
     return ty.name
   end
 
-  t.it("retombe sur SIMPLE_PROPERTY sans mot-clé", function()
+  t.it("falls back to SIMPLE_PROPERTY with no keyword", function()
     local ty, property = parser.detect_type("name")
     t.eq(ty.name, "SIMPLE_PROPERTY")
     t.eq(property, "name")
   end)
 
-  t.it("distingue GreaterThanEqual de GreaterThan", function()
+  t.it("distinguishes GreaterThanEqual from GreaterThan", function()
     t.eq(name_of("ageGreaterThan"), "GREATER_THAN")
     t.eq(name_of("ageGreaterThanEqual"), "GREATER_THAN_EQUAL")
   end)
 
-  t.it("distingue LessThanEqual de LessThan", function()
+  t.it("distinguishes LessThanEqual from LessThan", function()
     t.eq(name_of("ageLessThan"), "LESS_THAN")
     t.eq(name_of("ageLessThanEqual"), "LESS_THAN_EQUAL")
   end)
 
-  t.it("préfère IS_NOT_NULL à IS_NULL, comme l'ordre de ALL l'impose", function()
+  t.it("prefers IS_NOT_NULL over IS_NULL, as ALL's order requires", function()
     t.eq(name_of("nameNotNull"), "IS_NOT_NULL")
     t.eq(name_of("nameIsNotNull"), "IS_NOT_NULL")
     t.eq(name_of("nameNull"), "IS_NULL")
   end)
 
-  t.it("préfère NOT_LIKE à LIKE", function()
+  t.it("prefers NOT_LIKE over LIKE", function()
     t.eq(name_of("nameNotLike"), "NOT_LIKE")
     t.eq(name_of("nameLike"), "LIKE")
   end)
 
-  t.it("préfère NOT_IN à IN", function()
+  t.it("prefers NOT_IN over IN", function()
     t.eq(name_of("ageNotIn"), "NOT_IN")
     t.eq(name_of("ageIn"), "IN")
   end)
 
-  t.it("préfère NOT_CONTAINING à CONTAINING", function()
+  t.it("prefers NOT_CONTAINING over CONTAINING", function()
     t.eq(name_of("nameNotContaining"), "NOT_CONTAINING")
     t.eq(name_of("nameContaining"), "CONTAINING")
   end)
 
-  t.it("reconnaît tous les alias de CONTAINING et extrait la propriété", function()
+  t.it("recognises every CONTAINING alias and extracts the property", function()
     local ty1, prop1 = parser.detect_type("nameContaining")
     t.eq(ty1.name, "CONTAINING")
     t.eq(prop1, "name")
@@ -247,7 +247,7 @@ t.describe("parser › detect_type", function()
     t.eq(prop3, "name")
   end)
 
-  t.it("reconnaît tous les alias de STARTING_WITH", function()
+  t.it("recognises every STARTING_WITH alias", function()
     local ty1, prop1 = parser.detect_type("nameStartingWith")
     t.eq(ty1.name, "STARTING_WITH")
     t.eq(prop1, "name")
@@ -261,29 +261,29 @@ t.describe("parser › detect_type", function()
     t.eq(prop3, "name")
   end)
 
-  t.it("retire le suffixe pour donner la propriété brute", function()
+  t.it("strips the suffix to yield the raw property", function()
     local _, property = parser.detect_type("ageBetween")
     t.eq(property, "age")
   end)
 
-  t.it("reconnaît les types non supportés par JPA pour pouvoir les signaler", function()
+  t.it("recognises types not supported by JPA so they can be reported", function()
     t.eq(name_of("nameRegex"), "REGEX")
     t.eq(name_of("nameMatches"), "REGEX")
   end)
 
-  t.it("préfère NEGATING_SIMPLE_PROPERTY à SIMPLE_PROPERTY", function()
+  t.it("prefers NEGATING_SIMPLE_PROPERTY over SIMPLE_PROPERTY", function()
     t.eq(name_of("nameNot"), "NEGATING_SIMPLE_PROPERTY")
     t.eq(name_of("nameIs"), "SIMPLE_PROPERTY")
     t.eq(name_of("nameEquals"), "SIMPLE_PROPERTY")
   end)
 
-  t.it("reconnaît BETWEEN et ses deux arguments", function()
+  t.it("recognises BETWEEN and its two arguments", function()
     local ty = parser.detect_type("ageBetween")
     t.eq(ty.name, "BETWEEN")
     t.eq(ty.args, 2)
   end)
 
-  t.it("gère le cas limite : une part qui EST exactement un mot-clé", function()
+  t.it("handles the edge case: a part that IS exactly a keyword", function()
     local ty, property = parser.detect_type("Between")
     t.eq(ty.name, "BETWEEN")
     t.eq(property, "")
@@ -299,8 +299,8 @@ local FIELDS = {
   { name = "active", java_type = "boolean", annotations = {} },
   { name = "orders", java_type = "List<Order>", annotations = { "OneToMany" } },
   { name = "andrew", java_type = "String", annotations = {} },
-  -- Champs dont le nom se termine par un mot-clé de découpage, pour couvrir
-  -- la même collision que "andrew" mais sur And/Or/OrderBy en fin de chaîne.
+  -- Fields whose name ends in a splitting keyword, to cover the same
+  -- collision as "andrew" but for And/Or/OrderBy at the end of a string.
   { name = "logicalAnd", java_type = "String", annotations = {} },
   { name = "sortOrderBy", java_type = "String", annotations = {} },
   { name = "isOr", java_type = "String", annotations = {} },
@@ -315,7 +315,7 @@ local function names_of(list, key)
 end
 
 t.describe("parser › parse", function()
-  t.it("analyse un prédicat simple", function()
+  t.it("parses a simple predicate", function()
     local r = parser.parse("findByName", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "name")
@@ -325,7 +325,7 @@ t.describe("parser › parse", function()
     t.eq(r.errors, {})
   end)
 
-  t.it("analyse deux prédicats reliés par And", function()
+  t.it("parses two predicates joined by And", function()
     local r = parser.parse("findByNameAndAge", FIELDS)
     t.eq(names_of(r.predicates, "property"), { "name", "age" })
     t.eq(r.predicates[2].connector, "And")
@@ -335,54 +335,55 @@ t.describe("parser › parse", function()
     })
   end)
 
-  t.it("analyse deux prédicats reliés par Or", function()
+  t.it("parses two predicates joined by Or", function()
     local r = parser.parse("findByNameOrAge", FIELDS)
     t.eq(names_of(r.predicates, "property"), { "name", "age" })
     t.eq(r.predicates[2].connector, "Or")
   end)
 
-  t.it("ne découpe pas un champ dont le nom contient And", function()
+  t.it("does not split a field whose name contains And", function()
     local r = parser.parse("findByAndrewAge", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "andrewAge")
     t.eq(r.errors[1].code, "unknown_property")
   end)
 
-  t.it("découpe correctement un champ collisionnant suivi d'un vrai And", function()
+  t.it("correctly splits a colliding field followed by a real And", function()
     local r = parser.parse("findByAndrewAndAge", FIELDS)
     t.eq(names_of(r.predicates, "property"), { "andrew", "age" })
     t.eq(r.errors, {})
   end)
 
-  -- Régression : le découpage ne consulte JAMAIS la liste des champs (voir
-  -- contraintes du plan). "findByLogicalAnd" est donc indécidable depuis la
-  -- seule chaîne — And en cours de frappe, ou champ "logicalAnd" complet —
-  -- et split_on_keyword tranche comme PartTree : and/Or/OrderBy en toute
-  -- fin de chaîne, non suivis d'une majuscule, restent attachés au texte.
-  -- Quand le champ correspondant existe réellement, ce choix est le bon :
-  -- la propriété complète est retrouvée sans erreur.
-  t.it("reconnaît un champ dont le nom se termine par And", function()
+  -- Regression: splitting NEVER consults the field list (see the plan's
+  -- constraints). "findByLogicalAnd" is therefore undecidable from the
+  -- string alone — And still being typed, or a complete field named
+  -- "logicalAnd"? — and split_on_keyword settles it the way PartTree
+  -- does: and/Or/OrderBy right at the end of a string, not followed by an
+  -- uppercase letter, stay attached to the text. When the matching field
+  -- genuinely exists, this choice is the right one: the complete property
+  -- is found with no error.
+  t.it("recognises a field whose name ends in And", function()
     local r = parser.parse("findByLogicalAnd", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "logicalAnd")
     t.eq(r.errors, {})
   end)
 
-  t.it("reconnaît un champ dont le nom se termine par OrderBy", function()
+  t.it("recognises a field whose name ends in OrderBy", function()
     local r = parser.parse("findBySortOrderBy", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "sortOrderBy")
     t.eq(r.errors, {})
   end)
 
-  t.it("reconnaît un champ dont le nom se termine par Or", function()
+  t.it("recognises a field whose name ends in Or", function()
     local r = parser.parse("findByIsOr", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "isOr")
     t.eq(r.errors, {})
   end)
 
-  t.it("génère deux paramètres pour Between", function()
+  t.it("generates two parameters for Between", function()
     local r = parser.parse("findByAgeBetween", FIELDS)
     t.eq(r.params, {
       { name = "ageStart", java_type = "int" },
@@ -390,13 +391,13 @@ t.describe("parser › parse", function()
     })
   end)
 
-  t.it("ne génère aucun paramètre pour les conditions à zéro argument", function()
+  t.it("generates no parameter for zero-argument conditions", function()
     t.eq(parser.parse("findByNameIsNull", FIELDS).params, {})
     t.eq(parser.parse("findByActiveTrue", FIELDS).params, {})
     t.eq(parser.parse("findByOrdersIsEmpty", FIELDS).params, {})
   end)
 
-  t.it("type le paramètre de In comme une Collection du wrapper", function()
+  t.it("types In's parameter as a Collection of the wrapper", function()
     t.eq(parser.parse("findByAgeIn", FIELDS).params, {
       { name = "age", java_type = "Collection<Integer>" },
     })
@@ -405,30 +406,30 @@ t.describe("parser › parse", function()
     })
   end)
 
-  t.it("détecte IgnoreCase sans perturber le type", function()
+  t.it("detects IgnoreCase without disturbing the type", function()
     local r = parser.parse("findByNameContainingIgnoreCase", FIELDS)
     t.eq(r.predicates[1].type.name, "CONTAINING")
     t.eq(r.predicates[1].property, "name")
     t.eq(r.predicates[1].ignore_case, true)
   end)
 
-  t.it("retire AllIgnoreCase avant tout découpage", function()
+  t.it("strips AllIgnoreCase before any splitting", function()
     local r = parser.parse("findByNameAllIgnoreCaseAndAge", FIELDS)
     t.eq(names_of(r.predicates, "property"), { "name", "age" })
   end)
 
-  t.it("analyse un tri avec direction", function()
+  t.it("parses a sort with a direction", function()
     local r = parser.parse("findByNameOrderByAgeDesc", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.order_by, { { property = "age", direction = "Desc" } })
   end)
 
-  t.it("analyse un tri sans direction explicite", function()
+  t.it("parses a sort with no explicit direction", function()
     local r = parser.parse("findByNameOrderByAge", FIELDS)
     t.eq(r.order_by, { { property = "age", direction = nil } })
   end)
 
-  t.it("analyse un tri sur plusieurs propriétés", function()
+  t.it("parses a sort over several properties", function()
     local r = parser.parse("findByNameOrderByAgeAscIdDesc", FIELDS)
     t.eq(r.order_by, {
       { property = "age", direction = "Asc" },
@@ -436,148 +437,149 @@ t.describe("parser › parse", function()
     })
   end)
 
-  t.it("signale un double OrderBy", function()
+  t.it("reports a duplicate OrderBy", function()
     local r = parser.parse("findByNameOrderByAgeOrderByName", FIELDS)
     t.eq(r.errors[1].code, "duplicate_order_by")
   end)
 
-  t.it("signale un mot-clé non supporté par JPA", function()
+  t.it("reports a keyword not supported by JPA", function()
     local r = parser.parse("findByNameRegex", FIELDS)
     t.eq(r.errors[1].code, "unsupported_keyword")
-    -- Un mot-clé hors JPA ne doit pas en plus être signalé comme
-    -- incompatible avec le type du champ : ce serait une seconde erreur
-    -- factuellement fausse (le problème n'est pas le type de "name").
+    -- A non-JPA keyword must not also be reported as incompatible with the
+    -- field's type: that would be a second, factually wrong error (the
+    -- problem isn't "name"'s type).
     t.eq(#r.errors, 1)
   end)
 
-  t.it("signale une condition incompatible avec le type du champ", function()
+  t.it("reports a condition incompatible with the field's type", function()
     local r = parser.parse("findByAgeContaining", FIELDS)
     t.eq(r.errors[1].code, "incompatible_type")
   end)
 
-  t.it("signale une propriété inconnue", function()
+  t.it("reports an unknown property", function()
     local r = parser.parse("findByUnknownField", FIELDS)
     t.eq(r.errors[1].code, "unknown_property")
   end)
 
-  -- JpaQueryCreator.upperIfIgnoreCase : « Unable to ignore case of int
-  -- types, the property 'age' must reference a String ». Sans cette
-  -- vérification, la source proposait une signature qui empêche
-  -- l'application de démarrer.
-  t.it("signale IgnoreCase sur un champ non textuel", function()
+  -- JpaQueryCreator.upperIfIgnoreCase: "Unable to ignore case of int
+  -- types, the property 'age' must reference a String". Without this
+  -- check, the source used to offer a signature that keeps the
+  -- application from starting.
+  t.it("reports IgnoreCase on a non-text field", function()
     local r = parser.parse("findByAgeIgnoreCase", FIELDS)
-    t.eq(r.errors, { { code = "incompatible_type", message = "IgnoreCase ne s'applique pas à int" } })
+    t.eq(r.errors, { { code = "incompatible_type", message = "IgnoreCase does not apply to int" } })
   end)
 
-  t.it("accepte IgnoreCase sur un champ textuel", function()
+  t.it("accepts IgnoreCase on a text field", function()
     t.eq(parser.parse("findByNameIgnoreCase", FIELDS).errors, {})
     t.eq(parser.parse("findByNameContainingIgnoreCase", FIELDS).errors, {})
   end)
 
-  -- AllIgnor(ing|e)Case donne IgnoreCaseType.WHEN_POSSIBLE aux parts, et
-  -- cette branche de upperIfIgnoreCase n'applique upper() que si le type
-  -- s'y prête : elle ne lève jamais. La signaler serait une fausse erreur.
-  t.it("ne signale pas AllIgnoreCase sur un champ non textuel", function()
+  -- AllIgnor(ing|e)Case gives parts the WHEN_POSSIBLE IgnoreCaseType, and
+  -- that branch of upperIfIgnoreCase only applies upper() when the type
+  -- allows it: it never raises. Reporting it would be a false error.
+  t.it("does not report AllIgnoreCase on a non-text field", function()
     t.eq(parser.parse("findByNameAndAgeAllIgnoreCase", FIELDS).errors, {})
   end)
 
-  t.it("signale une propriété de tri inconnue", function()
+  t.it("reports an unknown sort property", function()
     local r = parser.parse("findByNameOrderByBogusAsc", FIELDS)
-    t.eq(r.errors, { { code = "unknown_property", message = "propriété de tri inconnue : bogus" } })
+    t.eq(r.errors, { { code = "unknown_property", message = "unknown sort property: bogus" } })
   end)
 
-  t.it("signale une propriété de tri manquante", function()
+  t.it("reports a missing sort property", function()
     local r = parser.parse("findByNameOrderByAsc", FIELDS)
     t.eq(r.errors[1].code, "missing_order_property")
-    -- Faute structurelle : détectable même sans liste de champs.
+    -- Structural fault: detectable even without a field list.
     t.eq(parser.parse("findByNameOrderByAsc", {}).errors[1].code, "missing_order_property")
   end)
 
-  t.it("valide chaque propriété de tri d'une clause multiple", function()
+  t.it("validates every sort property of a multi-key clause", function()
     t.eq(parser.parse("findByNameOrderByAgeAscIdDesc", FIELDS).errors, {})
     t.eq(#parser.parse("findByNameOrderByAgeAscBogusDesc", FIELDS).errors, 1)
   end)
 
-  t.it("ne valide pas les propriétés de tri sans liste de champs", function()
+  t.it("does not validate sort properties without a field list", function()
     t.eq(parser.parse("findByNameOrderByBogusAsc", {}).errors, {})
   end)
 
-  t.it("tolère une liste de champs vide sans lever d'erreur de propriété", function()
+  t.it("tolerates an empty field list without raising a property error", function()
     local r = parser.parse("findByName", {})
     t.eq(r.predicates[1].property, "name")
     t.eq(r.errors, {})
   end)
 
-  t.it("associe le champ résolu au prédicat", function()
+  t.it("attaches the resolved field to the predicate", function()
     local r = parser.parse("findByEmail", FIELDS)
     t.eq(r.predicates[1].field.java_type, "String")
     t.eq(r.predicates[1].field.annotations, { "Column(unique = true)" })
   end)
 end)
 
-t.describe("parser › états terminaux", function()
-  t.it("reste dans le sujet tant que By n'est pas tapé", function()
+t.describe("parser › terminal states", function()
+  t.it("stays in subject as long as By hasn't been typed", function()
     t.eq(parser.parse("find", FIELDS).state, "subject")
     t.eq(parser.parse("findDistinct", FIELDS).state, "subject")
   end)
 
-  t.it("attend une propriété juste après By", function()
+  t.it("waits for a property right after By", function()
     t.eq(parser.parse("findBy", FIELDS).state, "expect_property")
   end)
 
-  t.it("attend une propriété après un connecteur", function()
+  t.it("waits for a property after a connector", function()
     t.eq(parser.parse("findByNameAnd", FIELDS).state, "expect_property")
     t.eq(parser.parse("findByNameOr", FIELDS).state, "expect_property")
   end)
 
-  t.it("porte le connecteur encore en cours de frappe comme fragment du dernier prédicat", function()
-    -- "findByNameAnd" est indécidable depuis la seule chaîne : soit un And
-    -- pas encore suivi de propriété, soit un champ nommé "nameAnd" complet.
-    -- Le découpage ne consultant JAMAIS la liste des champs (contrainte du
-    -- plan), split_on_keyword tranche comme PartTree : And en toute fin de
-    -- chaîne, non suivi de majuscule, reste collé au texte. Le fragment
-    -- "nameAnd" atterrit donc bien dans predicates/params/errors ; c'est
-    -- `state` — "expect_property" ici — qui indique au consommateur de ne
-    -- pas s'y fier tel quel. Voir le contrat documenté sur M.parse.
+  t.it("carries the still-being-typed connector as the last predicate's fragment", function()
+    -- "findByNameAnd" is undecidable from the string alone: either an And
+    -- not yet followed by a property, or a complete field named "nameAnd".
+    -- Splitting NEVER consulting the field list (a plan constraint),
+    -- split_on_keyword settles it the way PartTree does: And right at the
+    -- end of a string, not followed by an uppercase letter, stays glued
+    -- to the text. The "nameAnd" fragment therefore does land in
+    -- predicates/params/errors; it's `state` — "expect_property" here —
+    -- that tells the consumer not to trust it as-is. See the documented
+    -- contract on M.parse.
     local r = parser.parse("findByNameAnd", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "nameAnd")
-    t.eq(r.errors, { { code = "unknown_property", message = "propriété inconnue : nameAnd" } })
+    t.eq(r.errors, { { code = "unknown_property", message = "unknown property: nameAnd" } })
     t.eq(r.params, { { name = "nameAnd", java_type = "Object" } })
     t.eq(r.state, "expect_property")
   end)
 
-  t.it("suit une propriété sans condition", function()
+  t.it("follows a property with no condition", function()
     t.eq(parser.parse("findByName", FIELDS).state, "after_property")
   end)
 
-  t.it("suit une condition explicite", function()
+  t.it("follows an explicit condition", function()
     t.eq(parser.parse("findByNameContaining", FIELDS).state, "after_condition")
     t.eq(parser.parse("findByAgeBetween", FIELDS).state, "after_condition")
   end)
 
-  t.it("attend une propriété de tri après OrderBy", function()
+  t.it("waits for a sort property after OrderBy", function()
     t.eq(parser.parse("findByNameOrderBy", FIELDS).state, "order_property")
   end)
 
-  t.it("porte le OrderBy encore en cours de frappe comme fragment du dernier prédicat", function()
-    -- Même indécidabilité que pour And/Or ci-dessus : "findByNameOrderBy"
-    -- pourrait être un champ complet nommé "nameOrderBy". split_on_keyword
-    -- rejette le découpage (OrderBy en toute fin de chaîne, aucune majuscule
-    -- ne suit), donc "NameOrderBy" reste une part entière et devient le
-    -- prédicat SIMPLE_PROPERTY "nameOrderBy", avec son erreur
-    -- unknown_property et son paramètre associés. `state` reste correct
-    -- ("order_property") grâce au seul correctif retenu dans terminal_state.
+  t.it("carries the still-being-typed OrderBy as the last predicate's fragment", function()
+    -- Same undecidability as And/Or above: "findByNameOrderBy" could be a
+    -- complete field named "nameOrderBy". split_on_keyword rejects the
+    -- split (OrderBy right at the end of the string, no uppercase letter
+    -- follows), so "NameOrderBy" stays a whole part and becomes the
+    -- SIMPLE_PROPERTY predicate "nameOrderBy", with its unknown_property
+    -- error and associated parameter. `state` stays correct
+    -- ("order_property") thanks to the sole fix kept in terminal_state.
     local r = parser.parse("findByNameOrderBy", FIELDS)
     t.eq(#r.predicates, 1)
     t.eq(r.predicates[1].property, "nameOrderBy")
     t.eq(r.order_by, {})
-    t.eq(r.errors, { { code = "unknown_property", message = "propriété inconnue : nameOrderBy" } })
+    t.eq(r.errors, { { code = "unknown_property", message = "unknown property: nameOrderBy" } })
     t.eq(r.params, { { name = "nameOrderBy", java_type = "Object" } })
     t.eq(r.state, "order_property")
   end)
 
-  t.it("attend une direction après une propriété de tri", function()
+  t.it("waits for a direction after a sort property", function()
     t.eq(parser.parse("findByNameOrderByAge", FIELDS).state, "order_direction")
     t.eq(parser.parse("findByNameOrderByAgeAsc", FIELDS).state, "order_direction")
   end)
@@ -588,57 +590,57 @@ t.describe("parser › return_type", function()
     return parser.return_type(parser.parse(source, FIELDS), "UserEntity", opts)
   end
 
-  t.it("donne long pour count", function()
+  t.it("gives long for count", function()
     t.eq(rt("countByName"), "long")
   end)
 
-  t.it("donne boolean pour exists", function()
+  t.it("gives boolean for exists", function()
     t.eq(rt("existsByName"), "boolean")
   end)
 
-  t.it("donne void pour delete par défaut", function()
+  t.it("gives void for delete by default", function()
     t.eq(rt("deleteByName"), "void")
     t.eq(rt("removeByName"), "void")
   end)
 
-  t.it("donne long pour delete si l'option le demande", function()
+  t.it("gives long for delete when the option asks for it", function()
     t.eq(rt("deleteByName", { delete_return_type = "long" }), "long")
   end)
 
-  t.it("donne Optional pour First et Top sans nombre", function()
+  t.it("gives Optional for First and Top without a number", function()
     t.eq(rt("findFirstByName"), "Optional<UserEntity>")
     t.eq(rt("findTopByName"), "Optional<UserEntity>")
   end)
 
-  t.it("donne Optional pour la forme explicite Top1", function()
+  t.it("gives Optional for the explicit Top1 form", function()
     t.eq(rt("findTop1ByName"), "Optional<UserEntity>")
   end)
 
-  t.it("donne List pour une limite supérieure à un", function()
+  t.it("gives List for a limit greater than one", function()
     t.eq(rt("findTop5ByName"), "List<UserEntity>")
   end)
 
-  t.it("donne Optional pour une égalité sur un champ annoté Id", function()
+  t.it("gives Optional for an equality on an Id-annotated field", function()
     t.eq(rt("findById"), "Optional<UserEntity>")
   end)
 
-  t.it("donne Optional pour une égalité sur un champ unique", function()
+  t.it("gives Optional for an equality on a unique field", function()
     t.eq(rt("findByEmail"), "Optional<UserEntity>")
   end)
 
-  t.it("donne List pour un champ non unique", function()
+  t.it("gives List for a non-unique field", function()
     t.eq(rt("findByName"), "List<UserEntity>")
   end)
 
-  t.it("donne List pour une condition non égalitaire sur un champ unique", function()
+  t.it("gives List for a non-equality condition on a unique field", function()
     t.eq(rt("findByIdGreaterThan"), "List<UserEntity>")
   end)
 
-  t.it("donne List dès qu'un second prédicat s'ajoute à un champ unique", function()
+  t.it("gives List as soon as a second predicate joins a unique field", function()
     t.eq(rt("findByEmailAndName"), "List<UserEntity>")
   end)
 
-  t.it("donne List quand un Or relie les prédicats", function()
+  t.it("gives List when an Or joins the predicates", function()
     t.eq(rt("findByEmailOrName"), "List<UserEntity>")
   end)
 end)
@@ -665,54 +667,54 @@ t.describe("parser › suggestions", function()
     return parser.suggestions(parser.parse(source, FIELDS), FIELDS)
   end
 
-  t.it("propose les champs juste après By", function()
+  t.it("offers the fields right after By", function()
     local labels = labels_of(suggest("findBy"))
     for _, name in ipairs({ "id", "name", "email", "age", "createdAt", "active", "orders" }) do
-      t.truthy(contains(labels, name), "champ manquant : " .. name)
+      t.truthy(contains(labels, name), "missing field: " .. name)
     end
   end)
 
-  t.it("propose les conditions textuelles sur un champ String", function()
+  t.it("offers text conditions on a String field", function()
     local labels = labels_of(suggest("findByName"))
     for _, keyword in ipairs({ "Containing", "StartingWith", "EndingWith", "Like", "IsNull" }) do
-      t.truthy(contains(labels, keyword), "mot-clé manquant : " .. keyword)
+      t.truthy(contains(labels, keyword), "missing keyword: " .. keyword)
     end
   end)
 
-  t.it("n'offre pas les conditions textuelles sur un champ numérique", function()
+  t.it("does not offer text conditions on a numeric field", function()
     local labels = labels_of(suggest("findByAge"))
     t.eq(contains(labels, "Containing"), false)
     t.eq(contains(labels, "StartingWith"), false)
-    t.truthy(contains(labels, "Between"), "Between doit être proposé sur un numérique")
-    t.truthy(contains(labels, "GreaterThan"), "GreaterThan doit être proposé")
+    t.truthy(contains(labels, "Between"), "Between should be offered on a numeric field")
+    t.truthy(contains(labels, "GreaterThan"), "GreaterThan should be offered")
   end)
 
-  t.it("n'offre pas Between sur un champ String", function()
+  t.it("does not offer Between on a String field", function()
     local labels = labels_of(suggest("findByName"))
     t.eq(contains(labels, "Between"), false)
     t.eq(contains(labels, "After"), false)
   end)
 
-  t.it("offre After et Before sur un champ temporel", function()
+  t.it("offers After and Before on a temporal field", function()
     local labels = labels_of(suggest("findByCreatedAt"))
-    t.truthy(contains(labels, "After"), "After doit être proposé")
-    t.truthy(contains(labels, "Before"), "Before doit être proposé")
+    t.truthy(contains(labels, "After"), "After should be offered")
+    t.truthy(contains(labels, "Before"), "Before should be offered")
     t.eq(contains(labels, "Containing"), false)
   end)
 
-  t.it("offre True et False sur un booléen, mais pas IsNull sur un primitif", function()
+  t.it("offers True and False on a boolean, but not IsNull on a primitive", function()
     local labels = labels_of(suggest("findByActive"))
-    t.truthy(contains(labels, "True"), "True doit être proposé")
-    t.truthy(contains(labels, "False"), "False doit être proposé")
+    t.truthy(contains(labels, "True"), "True should be offered")
+    t.truthy(contains(labels, "False"), "False should be offered")
     t.eq(contains(labels, "IsNull"), false)
   end)
 
-  t.it("offre IsEmpty sur une collection uniquement", function()
-    t.truthy(contains(labels_of(suggest("findByOrders")), "IsEmpty"), "IsEmpty attendu")
+  t.it("offers IsEmpty only on a collection", function()
+    t.truthy(contains(labels_of(suggest("findByOrders")), "IsEmpty"), "IsEmpty expected")
     t.eq(contains(labels_of(suggest("findByName")), "IsEmpty"), false)
   end)
 
-  t.it("n'offre jamais les mots-clés non supportés par JPA", function()
+  t.it("never offers keywords unsupported by JPA", function()
     for _, source in ipairs({ "findByName", "findByAge", "findByCreatedAt", "findByOrders" }) do
       local labels = labels_of(suggest(source))
       for _, forbidden in ipairs({ "Regex", "Matches", "MatchesRegex", "Exists", "Near", "Within" }) do
@@ -721,80 +723,80 @@ t.describe("parser › suggestions", function()
     end
   end)
 
-  t.it("offre les connecteurs et OrderBy après une propriété", function()
+  t.it("offers connectors and OrderBy after a property", function()
     local labels = labels_of(suggest("findByName"))
-    t.truthy(contains(labels, "And"), "And attendu")
-    t.truthy(contains(labels, "Or"), "Or attendu")
-    t.truthy(contains(labels, "OrderBy"), "OrderBy attendu")
+    t.truthy(contains(labels, "And"), "And expected")
+    t.truthy(contains(labels, "Or"), "Or expected")
+    t.truthy(contains(labels, "OrderBy"), "OrderBy expected")
   end)
 
-  t.it("offre IgnoreCase après une condition textuelle", function()
+  t.it("offers IgnoreCase after a text condition", function()
     local labels = labels_of(suggest("findByNameContaining"))
-    t.truthy(contains(labels, "IgnoreCase"), "IgnoreCase attendu")
+    t.truthy(contains(labels, "IgnoreCase"), "IgnoreCase expected")
   end)
 
-  t.it("n'offre pas IgnoreCase après une condition numérique", function()
+  t.it("does not offer IgnoreCase after a numeric condition", function()
     local labels = labels_of(suggest("findByAgeBetween"))
     t.eq(contains(labels, "IgnoreCase"), false)
   end)
 
-  t.it("offre les directions après une propriété de tri", function()
+  t.it("offers directions after a sort property", function()
     local labels = labels_of(suggest("findByNameOrderByAge"))
-    t.truthy(contains(labels, "Asc"), "Asc attendu")
-    t.truthy(contains(labels, "Desc"), "Desc attendu")
+    t.truthy(contains(labels, "Asc"), "Asc expected")
+    t.truthy(contains(labels, "Desc"), "Desc expected")
   end)
 
-  t.it("offre les champs après OrderBy", function()
+  t.it("offers fields after OrderBy", function()
     local labels = labels_of(suggest("findByNameOrderBy"))
-    t.truthy(contains(labels, "age"), "champ attendu après OrderBy")
+    t.truthy(contains(labels, "age"), "field expected after OrderBy")
   end)
 
-  t.it("offre les modificateurs dans le sujet", function()
+  t.it("offers modifiers in the subject", function()
     local labels = labels_of(suggest("find"))
-    t.truthy(contains(labels, "Distinct"), "Distinct attendu")
-    t.truthy(contains(labels, "First"), "First attendu")
-    t.truthy(contains(labels, "Top"), "Top attendu")
-    t.truthy(contains(labels, "By"), "By attendu")
+    t.truthy(contains(labels, "Distinct"), "Distinct expected")
+    t.truthy(contains(labels, "First"), "First expected")
+    t.truthy(contains(labels, "Top"), "Top expected")
+    t.truthy(contains(labels, "By"), "By expected")
   end)
 
-  t.it("propose tous les introducteurs sur une chaîne vide", function()
+  t.it("offers every introducer on an empty string", function()
     local labels = labels_of(suggest(""))
     for _, keyword in ipairs({ "find", "count", "exists", "delete" }) do
-      t.truthy(contains(labels, keyword), "introducteur manquant : " .. keyword)
+      t.truthy(contains(labels, keyword), "missing introducer: " .. keyword)
     end
   end)
 
-  t.it("restreint les introducteurs à ceux que le fragment commence", function()
-    -- Avant la complétion par fragment, les dix introducteurs étaient
-    -- proposés quel que soit le texte tapé ; « fin » n'en commence qu'un.
+  t.it("restricts introducers to the ones the fragment starts", function()
+    -- Before fragment-based completion, all ten introducers were offered
+    -- regardless of the typed text; "fin" only starts one of them.
     local labels = labels_of(suggest("fin"))
-    t.truthy(contains(labels, "find"), "find attendu")
+    t.truthy(contains(labels, "find"), "find expected")
     for _, keyword in ipairs({ "count", "exists", "delete", "By", "Distinct" }) do
       t.eq(contains(labels, keyword), false)
     end
   end)
 
-  t.it("n'offre plus les introducteurs une fois l'un d'eux reconnu", function()
+  t.it("no longer offers introducers once one is recognised", function()
     local labels = labels_of(suggest("find"))
     t.eq(contains(labels, "find"), false)
-    t.truthy(contains(labels, "Distinct"), "Distinct attendu")
-    t.truthy(contains(labels, "First"), "First attendu")
-    t.truthy(contains(labels, "Top"), "Top attendu")
-    t.truthy(contains(labels, "By"), "By attendu")
+    t.truthy(contains(labels, "Distinct"), "Distinct expected")
+    t.truthy(contains(labels, "First"), "First expected")
+    t.truthy(contains(labels, "Top"), "Top expected")
+    t.truthy(contains(labels, "By"), "By expected")
   end)
 
-  t.it("n'offre pas First et Top après count", function()
+  t.it("does not offer First and Top after count", function()
     local labels = labels_of(suggest("count"))
     t.eq(contains(labels, "First"), false)
     t.eq(contains(labels, "Top"), false)
-    t.truthy(contains(labels, "Distinct"), "Distinct reste proposé")
+    t.truthy(contains(labels, "Distinct"), "Distinct is still offered")
   end)
 
-  t.it("réduit les propositions au jeu neutre sur un type inconnu", function()
+  t.it("narrows suggestions to the neutral set on an unknown type", function()
     local fields = { { name = "status", java_type = "Status", annotations = {} } }
     local labels = labels_of(parser.suggestions(parser.parse("findByStatus", fields), fields))
     for _, keyword in ipairs({ "Is", "Equals", "Not", "IsNull", "IsNotNull", "In", "NotIn" }) do
-      t.truthy(contains(labels, keyword), "jeu neutre incomplet : " .. keyword)
+      t.truthy(contains(labels, keyword), "incomplete neutral set: " .. keyword)
     end
     for _, keyword in ipairs({ "Containing", "Between", "True", "IsEmpty" }) do
       t.eq(contains(labels, keyword), false)
@@ -802,20 +804,20 @@ t.describe("parser › suggestions", function()
   end)
 end)
 
--- Complétion d'un jeton partiel : le scénario même du plugin. Tant que la
--- fin de la chaîne ne résout pas, les propositions doivent REMPLACER ce
--- fragment au lieu de s'y ajouter — sans quoi taper un caractère de plus
--- faisait disparaître toute proposition utile, ou produisait des absurdités
--- du genre « findDistDistinct ».
-t.describe("parser › suggestions sur fragment", function()
+-- Completing a partial token: the plugin's very own scenario. As long as
+-- the end of the string doesn't resolve, suggestions must REPLACE this
+-- fragment rather than append to it — without which typing one more
+-- character made every useful suggestion disappear, or produced
+-- absurdities like "findDistDistinct".
+t.describe("parser › suggestions on a fragment", function()
   local function suggest(source, fields)
     fields = fields or FIELDS
     return parser.suggestions(parser.parse(source, fields), fields)
   end
 
-  -- Texte réellement inséré : le libellé remplace `replace_length`
-  -- caractères en fin de source. Reproduit ce que fait source.lua, pour
-  -- pouvoir énoncer les attentes sous leur forme observable.
+  -- Text actually inserted: the label replaces `replace_length`
+  -- characters at the end of the source. Reproduces what source.lua
+  -- does, so expectations can be stated in their observable form.
   local function inserted(source, label, fields)
     for _, s in ipairs(suggest(source, fields)) do
       if s.label == label then
@@ -829,48 +831,48 @@ t.describe("parser › suggestions sur fragment", function()
     return nil
   end
 
-  t.it("complète un mot-clé de condition amorcé", function()
+  t.it("completes a condition keyword already started", function()
     t.eq(inserted("findByNameCont", "Containing"), "findByNameContaining")
     t.eq(inserted("findByNameCont", "Contains"), "findByNameContains")
   end)
 
-  t.it("ne propose que ce que le fragment commence", function()
+  t.it("only offers what the fragment starts", function()
     local labels = labels_of(suggest("findByNameCont"))
     t.eq(labels, { "Containing", "Contains" })
   end)
 
-  t.it("complète un nom de champ amorcé", function()
+  t.it("completes a field name already started", function()
     t.eq(inserted("findByNa", "name"), "findByName")
     t.eq(labels_of(suggest("findByNa")), { "name" })
   end)
 
-  t.it("complète un champ dont le nom se termine par un connecteur", function()
+  t.it("completes a field whose name ends in a connector", function()
     t.eq(inserted("findByLogicalAn", "logicalAnd"), "findByLogicalAnd")
   end)
 
-  t.it("complète un connecteur amorcé après une propriété", function()
+  t.it("completes a connector already started after a property", function()
     t.eq(inserted("findByNameAn", "And"), "findByNameAnd")
     t.eq(inserted("findByNameOrderB", "OrderBy"), "findByNameOrderBy")
   end)
 
-  t.it("complète un modificateur de sujet sans le dupliquer", function()
+  t.it("completes a subject modifier without duplicating it", function()
     t.eq(inserted("findDist", "Distinct"), "findDistinct")
     t.eq(inserted("findDistinctFir", "First"), "findDistinctFirst")
     t.eq(inserted("findTop5B", "By"), "findTop5By")
   end)
 
-  t.it("ne repropose pas un modificateur déjà posé", function()
+  t.it("does not re-offer a modifier already in place", function()
     t.eq(contains(labels_of(suggest("findDistinct")), "Distinct"), false)
     t.eq(contains(labels_of(suggest("findFirst")), "First"), false)
-    t.truthy(contains(labels_of(suggest("findDistinct")), "By"), "By reste proposé")
+    t.truthy(contains(labels_of(suggest("findDistinct")), "By"), "By is still offered")
   end)
 
-  t.it("ne propose rien sur un fragment qui ne correspond à rien", function()
+  t.it("offers nothing on a fragment matching nothing", function()
     t.eq(suggest("findByZzz"), {})
     t.eq(suggest("findByNameZzz"), {})
   end)
 
-  t.it("traite un fragment égal à un nom de champ complet comme achevé", function()
+  t.it("treats a fragment equal to a complete field name as resolved", function()
     local r = parser.parse("findByName", FIELDS)
     t.eq(r.fragment, "")
     for _, s in ipairs(parser.suggestions(r, FIELDS)) do
@@ -880,25 +882,25 @@ t.describe("parser › suggestions sur fragment", function()
     t.eq(inserted("findByName", "And"), "findByNameAnd")
   end)
 
-  t.it("complète une propriété de tri amorcée", function()
+  t.it("completes a sort property already started", function()
     t.eq(inserted("findByNameOrderByNa", "name"), "findByNameOrderByName")
     t.eq(labels_of(suggest("findByNameOrderByNa")), { "name" })
   end)
 
-  t.it("complète une direction de tri amorcée", function()
+  t.it("completes a sort direction already started", function()
     t.eq(inserted("findByNameOrderByAgeA", "Asc"), "findByNameOrderByAgeAsc")
     t.eq(inserted("findByNameOrderByAgeDe", "Desc"), "findByNameOrderByAgeDesc")
   end)
 
-  t.it("ne propose pas de seconde direction sur un bloc de tri clos", function()
+  t.it("does not offer a second direction on a closed sort block", function()
     t.eq(contains(labels_of(suggest("findByNameOrderByAgeAsc")), "Asc"), false)
-    t.truthy(contains(labels_of(suggest("findByNameOrderByAgeAsc")), "name"), "champ attendu")
+    t.truthy(contains(labels_of(suggest("findByNameOrderByAgeAsc")), "name"), "field expected")
   end)
 
-  t.it("ne devine aucun fragment sans liste de champs", function()
-    -- Sans champs, la validation est désactivée (§6) : rien ne distingue un
-    -- fragment d'une propriété achevée. On retombe alors sur l'ancien
-    -- comportement — ajouter à la suite — plutôt que de deviner.
+  t.it("guesses no fragment without a field list", function()
+    -- Without fields, validation is disabled (§6): nothing distinguishes a
+    -- fragment from a completed property. We then fall back to the old
+    -- behaviour — appending — rather than guessing.
     local r = parser.parse("findByNameCont", {})
     t.eq(r.fragment, "")
     local labels = labels_of(parser.suggestions(r, {}))

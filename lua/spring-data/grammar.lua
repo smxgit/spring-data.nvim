@@ -1,13 +1,13 @@
--- Données pures transcrites depuis les sources de Spring Data.
--- Ce module ne contient aucune fonction et ne référence jamais `vim`.
+-- Pure data transcribed from Spring Data's sources.
+-- This module contains no function and never references `vim`.
 --
--- Sources :
---   spring-data-commons : PartTree.java, Part.java, OrderBySource.java
---   spring-data-jpa     : JpaQueryCreator.java
+-- Sources:
+--   spring-data-commons: PartTree.java, Part.java, OrderBySource.java
+--   spring-data-jpa:     JpaQueryCreator.java
 local M = {}
 
--- PartTree : QUERY_PATTERN, COUNT_PATTERN, EXISTS_PATTERN, DELETE_PATTERN.
--- Aucun mot-clé n'est préfixe d'un autre, le premier match est donc sans ambiguïté.
+-- PartTree: QUERY_PATTERN, COUNT_PATTERN, EXISTS_PATTERN, DELETE_PATTERN.
+-- No keyword is a prefix of another, so the first match is unambiguous.
 M.introducers = {
   { keyword = "find", category = "query" },
   { keyword = "read", category = "query" },
@@ -21,27 +21,27 @@ M.introducers = {
   { keyword = "remove", category = "delete" },
 }
 
--- PartTree.Subject : DISTINCT, LIMITING_QUERY_PATTERN.
--- LIMITED_QUERY_TEMPLATE impose l'ordre Distinct puis First/Top, et ne
--- s'applique qu'à la catégorie « query ».
+-- PartTree.Subject: DISTINCT, LIMITING_QUERY_PATTERN.
+-- LIMITED_QUERY_TEMPLATE enforces the order Distinct then First/Top, and
+-- only applies to the "query" category.
 M.distinct = "Distinct"
 M.limiting = { "First", "Top" }
 
--- PartTree.Predicate : ORDER_BY. OrderBySource : DIRECTION_KEYWORDS.
+-- PartTree.Predicate: ORDER_BY. OrderBySource: DIRECTION_KEYWORDS.
 M.order_by = "OrderBy"
 M.directions = { "Asc", "Desc" }
 
--- Découpage du prédicat : Or d'abord, And ensuite.
+-- Predicate splitting: Or first, then And.
 M.connectors = { "And", "Or" }
 
--- Part.IGNORE_CASE = "Ignor(ing|e)Case" et Predicate.ALL_IGNORE_CASE.
--- Ordonnés du plus long au plus court pour que la recherche littérale
--- ne tronque pas la variante longue.
+-- Part.IGNORE_CASE = "Ignor(ing|e)Case" and Predicate.ALL_IGNORE_CASE.
+-- Ordered longest to shortest so the literal search doesn't truncate the
+-- longer variant.
 M.ignore_case = { "IgnoringCase", "IgnoreCase" }
 M.all_ignore_case = { "AllIgnoringCase", "AllIgnoreCase" }
 
--- Nécessaire pour typer les paramètres de In / NotIn : Collection<Integer>
--- et non Collection<int>, un générique Java n'acceptant pas de primitif.
+-- Needed to type In / NotIn parameters as Collection<Integer> rather than
+-- Collection<int>, since a Java generic can't take a primitive.
 M.boxed = {
   ["int"] = "Integer",
   ["long"] = "Long",
@@ -53,26 +53,26 @@ M.boxed = {
   ["boolean"] = "Boolean",
 }
 
--- Part.Type, transcrit dans l'ordre de la constante ALL.
+-- Part.Type, transcribed in the order of the ALL constant.
 --
--- L'ORDRE EST SIGNIFICATIF. Le code Java porte le commentaire « Need to list
--- them again explicitly as the order is important ». Le parser retient le
--- premier type dont un alias satisfait endsWith : c'est cet ordre qui fait
--- que « NotNull » donne IS_NOT_NULL et non IS_NULL, « NotLike » NOT_LIKE et
--- non LIKE, « NotIn » NOT_IN et non IN.
+-- ORDER IS SIGNIFICANT. The Java code carries the comment "Need to list
+-- them again explicitly as the order is important". The parser keeps the
+-- first type whose alias satisfies endsWith: this order is what makes
+-- "NotNull" resolve to IS_NOT_NULL and not IS_NULL, "NotLike" to NOT_LIKE
+-- and not LIKE, "NotIn" to NOT_IN and not IN.
 --
--- Champ `jpa` : false pour les types que le parser doit savoir reconnaître
--- mais que la source ne proposera jamais.
---   REGEX, EXISTS : absents du switch de JpaQueryCreator, lèvent
---                   « Unsupported keyword » au démarrage.
---   NEAR, WITHIN  : supportés par JPA, mais pour la recherche vectorielle,
---                   avec un paramètre Score ou Range<Score>. Hors v1.
+-- `jpa` field: false for types the parser must still recognise but that
+-- the source will never offer.
+--   REGEX, EXISTS: absent from JpaQueryCreator's switch, raise
+--                  "Unsupported keyword" at startup.
+--   NEAR, WITHIN:  supported by JPA, but for vector search, with a Score
+--                  or Range<Score> parameter. Out of scope for v1.
 --
--- Champ `accepts` : SEULE donnée qui ne provient pas de Spring. C'est le
--- filtrage par type ajouté par le plugin. « all » signifie toute catégorie.
--- Noter que le jeu neutre appliqué aux types inconnus n'est pas codé en dur :
--- il émerge de cette colonne, « unknown » n'étant listé que par IN / NOT_IN,
--- les autres types s'appuyant sur « all ».
+-- `accepts` field: the ONLY data that does not come from Spring. This is
+-- the plugin's own type filtering. "all" means every category. Note the
+-- neutral set applied to unknown types is not hardcoded: it emerges from
+-- this column, "unknown" being listed only by IN / NOT_IN, every other
+-- type relying on "all".
 M.types = {
   { name = "IS_NOT_NULL", keywords = { "IsNotNull", "NotNull" }, args = 0, jpa = true,
     accepts = "all", requires_nullable = true },
@@ -130,14 +130,14 @@ M.types = {
     accepts = "all" },
 }
 
--- Type retenu par défaut quand aucun alias ne correspond, conformément à
--- Part.Type.fromProperty qui retourne SIMPLE_PROPERTY en dernier recours.
+-- Default type when no alias matches, per Part.Type.fromProperty, which
+-- returns SIMPLE_PROPERTY as a last resort.
 M.default_type = M.types[#M.types]
 
--- Classement des types Java en catégories, base du filtrage `accepts`.
--- Un type absent de cette table relève de la catégorie « unknown » : enum,
--- entité liée, type personnalisé. Le classement effectif est réalisé par
--- parser.categorize, ce module ne contenant aucune fonction.
+-- Java type -> category mapping, the basis of `accepts` filtering. A type
+-- absent from this table falls under the "unknown" category: enum,
+-- related entity, custom type. The actual classification is done by
+-- parser.categorize; this module contains no function.
 M.categories = {
   ["String"] = "string",
   ["char"] = "string",
@@ -173,13 +173,13 @@ M.categories = {
   ["Boolean"] = "boolean",
 }
 
--- Conteneurs reconnus comme catégorie « collection » lorsqu'ils portent des
--- paramètres génériques : List<T>, Set<T>, Collection<T>.
+-- Containers recognised as the "collection" category when carrying generic
+-- parameters: List<T>, Set<T>, Collection<T>.
 M.collection_types = { "List", "Set", "Collection" }
 
--- Un primitif ne peut jamais être null : IsNull / IsNotNull sont exclus,
--- indépendamment de la catégorie. `boolean` et `Boolean` partagent la
--- catégorie « boolean » mais seul le second accepte IsNull.
+-- A primitive can never be null: IsNull / IsNotNull are excluded regardless
+-- of category. `boolean` and `Boolean` share the "boolean" category but
+-- only the latter accepts IsNull.
 M.primitives = {
   ["int"] = true,
   ["long"] = true,

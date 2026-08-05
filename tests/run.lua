@@ -1,4 +1,4 @@
--- Point d'entrée de la suite : `luajit tests/run.lua` depuis la racine du dépôt.
+-- Suite entry point: `luajit tests/run.lua` from the repo root.
 local root = (arg and arg[0] or ""):match("^(.*)/tests/run%.lua$") or "."
 
 package.path = table.concat({

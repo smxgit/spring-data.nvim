@@ -1,8 +1,8 @@
 local t = require("harness")
 local grammar = require("spring-data.grammar")
 
-t.describe("grammar › introducteurs", function()
-  t.it("couvre exactement les dix mots-clés de PartTree", function()
+t.describe("grammar › introducers", function()
+  t.it("covers exactly PartTree's ten keywords", function()
     local seen = {}
     for _, intro in ipairs(grammar.introducers) do
       seen[intro.keyword] = intro.category
@@ -21,13 +21,13 @@ t.describe("grammar › introducteurs", function()
     })
   end)
 
-  t.it("n'a aucun introducteur préfixe d'un autre", function()
+  t.it("has no introducer that's a prefix of another", function()
     for _, a in ipairs(grammar.introducers) do
       for _, b in ipairs(grammar.introducers) do
         if a.keyword ~= b.keyword then
           t.truthy(
             b.keyword:sub(1, #a.keyword) ~= a.keyword,
-            a.keyword .. " est préfixe de " .. b.keyword
+            a.keyword .. " is a prefix of " .. b.keyword
           )
         end
       end
@@ -35,8 +35,8 @@ t.describe("grammar › introducteurs", function()
   end)
 end)
 
-t.describe("grammar › modificateurs", function()
-  t.it("expose Distinct, First/Top, les directions et les connecteurs", function()
+t.describe("grammar › modifiers", function()
+  t.it("exposes Distinct, First/Top, directions and connectors", function()
     t.eq(grammar.distinct, "Distinct")
     t.eq(grammar.limiting, { "First", "Top" })
     t.eq(grammar.directions, { "Asc", "Desc" })
@@ -44,14 +44,14 @@ t.describe("grammar › modificateurs", function()
     t.eq(grammar.connectors, { "And", "Or" })
   end)
 
-  t.it("liste les variantes IgnoreCase de la plus longue à la plus courte", function()
+  t.it("lists IgnoreCase variants from longest to shortest", function()
     t.eq(grammar.ignore_case, { "IgnoringCase", "IgnoreCase" })
     t.eq(grammar.all_ignore_case, { "AllIgnoringCase", "AllIgnoreCase" })
   end)
 end)
 
 t.describe("grammar › boxing", function()
-  t.it("associe chaque primitif à son wrapper", function()
+  t.it("maps each primitive to its wrapper", function()
     t.eq(grammar.boxed["int"], "Integer")
     t.eq(grammar.boxed["long"], "Long")
     t.eq(grammar.boxed["char"], "Character")
@@ -60,8 +60,8 @@ t.describe("grammar › boxing", function()
   end)
 end)
 
-t.describe("grammar › types de conditions", function()
-  t.it("reproduit exactement l'ordre de Part.Type.ALL", function()
+t.describe("grammar › condition types", function()
+  t.it("reproduces Part.Type.ALL's exact order", function()
     local names = {}
     for _, ty in ipairs(grammar.types) do
       names[#names + 1] = ty.name
@@ -97,7 +97,7 @@ t.describe("grammar › types de conditions", function()
     })
   end)
 
-  t.it("transcrit le nombre d'arguments de Part.Type", function()
+  t.it("transcribes Part.Type's argument counts", function()
     local args = {}
     for _, ty in ipairs(grammar.types) do
       args[ty.name] = ty.args
@@ -117,7 +117,7 @@ t.describe("grammar › types de conditions", function()
     end
   end)
 
-  t.it("marque comme non-JPA les quatre types hors périmètre", function()
+  t.it("marks the four out-of-scope types as non-JPA", function()
     local jpa = {}
     for _, ty in ipairs(grammar.types) do
       jpa[ty.name] = ty.jpa
@@ -130,20 +130,20 @@ t.describe("grammar › types de conditions", function()
     t.eq(jpa["IS_EMPTY"], true)
   end)
 
-  t.it("n'a aucun alias dupliqué entre types", function()
+  t.it("has no alias duplicated across types", function()
     local owner = {}
     for _, ty in ipairs(grammar.types) do
       for _, kw in ipairs(ty.keywords) do
         t.truthy(
           owner[kw] == nil,
-          "alias « " .. kw .. " » présent sur " .. tostring(owner[kw]) .. " et " .. ty.name
+          "alias \"" .. kw .. "\" present on " .. tostring(owner[kw]) .. " and " .. ty.name
         )
         owner[kw] = ty.name
       end
     end
   end)
 
-  t.it("déclare tous les alias documentés pour les types à variantes", function()
+  t.it("declares every documented alias for multi-variant types", function()
     local by_name = {}
     for _, ty in ipairs(grammar.types) do
       by_name[ty.name] = ty
@@ -155,7 +155,7 @@ t.describe("grammar › types de conditions", function()
     t.eq(by_name["IS_NOT_NULL"].keywords, { "IsNotNull", "NotNull" })
   end)
 
-  t.it("marque IS_NULL et IS_NOT_NULL comme exigeant un type nullable", function()
+  t.it("marks IS_NULL and IS_NOT_NULL as requiring a nullable type", function()
     local by_name = {}
     for _, ty in ipairs(grammar.types) do
       by_name[ty.name] = ty
@@ -166,14 +166,14 @@ t.describe("grammar › types de conditions", function()
   end)
 end)
 
-t.describe("grammar › catégories de types Java", function()
-  t.it("classe les types textuels", function()
+t.describe("grammar › Java type categories", function()
+  t.it("classifies text types", function()
     t.eq(grammar.categories["String"], "string")
     t.eq(grammar.categories["char"], "string")
     t.eq(grammar.categories["Character"], "string")
   end)
 
-  t.it("classe les types numériques, primitifs et wrappers", function()
+  t.it("classifies numeric types, primitives and wrappers", function()
     for _, name in ipairs({
       "int", "long", "short", "byte", "float", "double",
       "Integer", "Long", "Short", "Byte", "Float", "Double",
@@ -183,7 +183,7 @@ t.describe("grammar › catégories de types Java", function()
     end
   end)
 
-  t.it("classe les types temporels", function()
+  t.it("classifies temporal types", function()
     for _, name in ipairs({
       "LocalDate", "LocalTime", "LocalDateTime", "Instant",
       "ZonedDateTime", "OffsetDateTime", "Date", "Timestamp",
@@ -193,17 +193,17 @@ t.describe("grammar › catégories de types Java", function()
     end
   end)
 
-  t.it("classe les booléens", function()
+  t.it("classifies booleans", function()
     t.eq(grammar.categories["boolean"], "boolean")
     t.eq(grammar.categories["Boolean"], "boolean")
   end)
 
-  t.it("ne classe pas les types inconnus", function()
+  t.it("does not classify unknown types", function()
     t.eq(grammar.categories["UserEntity"], nil)
     t.eq(grammar.categories["Status"], nil)
   end)
 
-  t.it("liste les conteneurs et les primitifs", function()
+  t.it("lists containers and primitives", function()
     t.eq(grammar.collection_types, { "List", "Set", "Collection" })
     t.eq(grammar.primitives["int"], true)
     t.eq(grammar.primitives["boolean"], true)

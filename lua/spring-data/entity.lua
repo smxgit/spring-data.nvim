@@ -1,13 +1,13 @@
--- Résolution de l'entité d'un repository Spring Data et extraction de ses
--- champs. Seul module à dépendre à la fois de treesitter et de jdtls.
+-- Resolves a Spring Data repository's entity and extracts its fields.
+-- The only module that depends on both treesitter and jdtls.
 local M = {}
 
---- Requête treesitter isolant le premier argument générique d'une interface
---- qui étend un type dont le nom se termine par « Repository ».
+--- Treesitter query isolating the first generic argument of an interface
+--- extending a type whose name ends in "Repository".
 ---
---- Le parser java expose `extends_interfaces` sur les versions récentes et
---- `super_interfaces` sur les plus anciennes ; la requête tolère les deux en
---- ne contraignant pas le nœud intermédiaire.
+--- The java parser exposes `extends_interfaces` on recent versions and
+--- `super_interfaces` on older ones; the query tolerates both by not
+--- constraining the intermediate node.
 local QUERY = [[
 (interface_declaration
   (_
@@ -37,7 +37,7 @@ local function iter_matches(bufnr)
   return query, tree:root()
 end
 
---- Nom de l'entité d'un repository, ou nil si le buffer n'en est pas un.
+--- Name of a repository's entity, or nil if the buffer isn't one.
 function M.resolve_entity_name(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -67,43 +67,42 @@ function M.resolve_entity_name(bufnr)
   return nil
 end
 
---- Vrai si le buffer contient une interface étendant un *Repository.
+--- True if the buffer contains an interface extending a *Repository.
 function M.is_repository(bufnr)
   return M.resolve_entity_name(bufnr) ~= nil
 end
 
--- Cache des champs, indexé par nom d'entité. Invalidé sur BufWritePost du
--- fichier de l'entité, via setup_autocmds.
+-- Field cache, indexed by entity name. Invalidated on BufWritePost of the
+-- entity's file, via setup_autocmds.
 --
--- `uri_index` associe un NUMÉRO DE BUFFER (pas un chemin) à l'entité qu'il
--- contient : `args.file` d'un autocmd BufWritePost reflète tel quel la
--- façon dont le buffer a été ouvert — relatif si ouvert via un chercheur
--- flou ou un chemin relatif — alors que l'URI renvoyée par jdtls est
--- toujours absolue. Les deux chaînes ne coïncidaient donc presque jamais,
--- et l'invalidation ne se déclenchait pas. Le numéro de buffer est stable
--- et indépendant de toute représentation textuelle du chemin.
+-- `uri_index` maps a BUFFER NUMBER (not a path) to the entity it holds:
+-- `args.file` from a BufWritePost autocmd reflects however the buffer was
+-- opened as-is — relative if opened via a fuzzy finder or a relative
+-- path — while the URI jdtls returns is always absolute. The two strings
+-- therefore almost never matched, and invalidation never fired. A buffer
+-- number is stable and independent of any textual path representation.
 local cache = {}
 local uri_index = {}
 
--- Requêtes `M.fields` en cours par nom d'entité : deux demandes concurrentes
--- pour la même entité partagent une seule requête workspace/symbol au lieu
--- d'en déclencher deux, et sont toutes deux résolues à la réponse unique.
+-- In-flight `M.fields` requests by entity name: two concurrent requests
+-- for the same entity share a single workspace/symbol request instead of
+-- firing two, and both get resolved from the one response.
 local pending = {}
 
---- Requête treesitter localisant une classe par son nom simple et son corps.
---- Le nom est filtré après coup (égalité stricte avec l'entité recherchée) :
---- la requête elle-même matche n'importe quelle classe, y compris les
---- classes imbriquées (clé composite @Embeddable, par exemple), mais comme
---- un nom de classe simple est unique dans un fichier Java, filtrer par
---- égalité isole sans ambiguïté le corps de la bonne classe.
+--- Treesitter query locating a class by its simple name and body.
+--- The name is filtered afterwards (strict equality with the entity being
+--- looked up): the query itself matches any class, including nested ones
+--- (an @Embeddable composite key, for instance), but since a simple class
+--- name is unique within a Java file, filtering by equality unambiguously
+--- isolates the right class's body.
 local CLASS_QUERY = [[
 (class_declaration
   name: (identifier) @name
   body: (class_body) @body)
 ]]
 
---- Corps (class_body) de la classe portant le nom `entity_name`, ou nil si
---- introuvable dans l'arbre.
+--- Body (class_body) of the class named `entity_name`, or nil if not
+--- found in the tree.
 local function find_class_body(root, bufnr, entity_name)
   local query_ok, query = pcall(vim.treesitter.query.parse, "java", CLASS_QUERY)
   if not query_ok then
@@ -129,15 +128,15 @@ local function find_class_body(root, bufnr, entity_name)
   return nil
 end
 
---- Nom simple d'une annotation, avec ses arguments éventuels, sans
---- qualification de paquetage : « @jakarta.persistence.Id » devient « Id »,
---- « @Column(unique = true) » reste « Column(unique = true) ».
+--- Simple name of an annotation, with any arguments, stripped of package
+--- qualification: "@jakarta.persistence.Id" becomes "Id",
+--- "@Column(unique = true)" stays "Column(unique = true)".
 ---
---- parser.is_unique_field (Task 9) compare par égalité stricte au nom
---- simple (`annotation == "Id"`) et cherche les sous-chaînes « Column » /
---- « unique » pour le second cas : une annotation totalement qualifiée
---- (légale en Java, `@jakarta.persistence.Id`) casserait ces deux
---- vérifications si elle n'était pas normalisée ici.
+--- parser.is_unique_field (Task 9) compares by strict equality against the
+--- simple name (`annotation == "Id"`) and searches for the "Column" /
+--- "unique" substrings for the second case: a fully-qualified annotation
+--- (legal in Java, `@jakarta.persistence.Id`) would break both checks if
+--- it weren't normalised here.
 local function annotation_text(node, bufnr)
   local name_node = node:field("name")[1]
   if not name_node then
@@ -155,8 +154,8 @@ local function annotation_text(node, bufnr)
   return simple
 end
 
---- Extrait les champs déclarés directement dans un `field_declaration`,
---- annotations et modificateurs compris.
+--- Extracts the fields declared directly in a `field_declaration`,
+--- annotations and modifiers included.
 local function fields_of_declaration(node, bufnr)
   local java_type
   local annotations = {}
@@ -174,8 +173,8 @@ local function fields_of_declaration(node, bufnr)
             annotations[#annotations + 1] = text
           end
         elseif mtype == "static" or mtype == "transient" then
-          -- Un champ statique ou transient n'est pas persisté : il ne doit
-          -- pas être proposé.
+          -- A static or transient field isn't persisted: it must not be
+          -- offered.
           skip = true
         end
       end
@@ -185,8 +184,8 @@ local function fields_of_declaration(node, bufnr)
         names[#names + 1] = vim.treesitter.get_node_text(name_node, bufnr)
       end
     elseif java_type == nil then
-      -- Premier enfant qui n'est ni les modificateurs ni un déclarateur :
-      -- c'est le nœud de type (type_identifier, generic_type, etc.).
+      -- First child that's neither the modifiers nor a declarator: it's
+      -- the type node (type_identifier, generic_type, etc.).
       java_type = vim.treesitter.get_node_text(child, bufnr)
     end
   end
@@ -195,8 +194,8 @@ local function fields_of_declaration(node, bufnr)
     return {}
   end
 
-  -- `private String a, b;` déclare plusieurs champs dans un seul
-  -- field_declaration : un par déclarateur, type et annotations partagés.
+  -- `private String a, b;` declares several fields in a single
+  -- field_declaration: one per declarator, sharing type and annotations.
   local out = {}
   for _, name in ipairs(names) do
     out[#out + 1] = { name = name, java_type = java_type, annotations = annotations }
@@ -204,22 +203,21 @@ local function fields_of_declaration(node, bufnr)
   return out
 end
 
---- Extrait les champs de la classe `entity_name` dans un buffer Java : nom,
---- type et annotations. Les annotations et modificateurs (static,
---- transient) vivent dans le nœud `modifiers` du `field_declaration` —
---- documentSymbol ne les remonterait pas, d'où le passage par treesitter
---- sur le buffer réel.
+--- Extracts the fields of class `entity_name` in a Java buffer: name,
+--- type and annotations. Annotations and modifiers (static, transient)
+--- live in the `field_declaration`'s `modifiers` node — documentSymbol
+--- wouldn't surface them, hence going through treesitter on the real
+--- buffer.
 ---
---- Ne parcourt que les `field_declaration` enfants directs du corps de
---- cette classe précise : une requête non bornée matcherait aussi les
---- champs d'une classe imbriquée (clé composite @Embeddable, par exemple)
---- et les ferait fuir dans les propositions de complétion.
+--- Only walks the `field_declaration` direct children of this specific
+--- class's body: an unbounded query would also match the fields of a
+--- nested class (an @Embeddable composite key, for instance) and leak
+--- them into completion suggestions.
 ---
---- Retourne nil si la classe `entity_name` est introuvable dans l'arbre —
---- distinct d'une liste vide, qui signifie « classe trouvée, zéro champ
---- persistable » et qui est un résultat légitime à mettre en cache. Le nil
---- ne doit jamais être mis en cache : il permettra une nouvelle tentative
---- au prochain appel.
+--- Returns nil if class `entity_name` isn't found in the tree — distinct
+--- from an empty list, which means "class found, zero persistable field"
+--- and is a legitimate result to cache. nil must never be cached: it lets
+--- a later call retry instead.
 local function extract_fields(bufnr, entity_name)
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr, "java")
   if not ok or not parser then
@@ -248,12 +246,12 @@ local function extract_fields(bufnr, entity_name)
   return fields
 end
 
---- Charge le fichier d'une URI dans un buffer et en extrait les champs de
---- la classe `entity_name`. Retourne `nil` (jamais mis en cache par
---- l'appelant) si le buffer n'a pas pu être chargé — fichier supprimé,
---- document virtuel `jdt://` d'un jar dont le contenu n'est pas
---- accessible tel quel, etc. Retourne aussi le `bufnr` résolu : l'appelant
---- en a besoin pour indexer `uri_index` sans jamais repasser par un chemin.
+--- Loads a URI's file into a buffer and extracts the fields of class
+--- `entity_name`. Returns `nil` (never cached by the caller) if the
+--- buffer could not be loaded — deleted file, virtual `jdt://` document
+--- from a jar whose content isn't accessible as-is, etc. Also returns the
+--- resolved `bufnr`: the caller needs it to index `uri_index` without
+--- ever going back through a path.
 local function fields_from_uri(uri, entity_name)
   local uri_ok, bufnr = pcall(vim.uri_to_bufnr, uri)
   if not uri_ok or not bufnr then
@@ -268,18 +266,18 @@ local function fields_from_uri(uri, entity_name)
   return extract_fields(bufnr, entity_name), bufnr
 end
 
---- Récupère les champs d'une entité, en passant par le cache.
---- jdtls localise le fichier via workspace/symbol, treesitter en extrait le
---- contenu — documentSymbol ne remonterait pas les annotations.
+--- Fetches an entity's fields, going through the cache.
+--- jdtls locates the file via workspace/symbol, treesitter extracts its
+--- content — documentSymbol wouldn't surface the annotations.
 ---
---- `callback(fields, ok)`. `ok` est faux quand la liste n'a PAS pu être
---- établie — jdtls pas encore attaché, workspace/symbol muet, fichier
---- illisible — par opposition à une entité réellement dépourvue de champ
---- persistable, qui donne une liste vide avec `ok` vrai. Les deux cas
---- produisent la même liste vide côté parser, qui désactive alors la
---- validation (§6) ; sans ce second retour, l'appelant confondrait
---- « aucune erreur relevée » avec « vérifié », et proposerait des
---- signatures fabriquées sur des propriétés jamais confrontées à l'entité.
+--- `callback(fields, ok)`. `ok` is false when the list could NOT be
+--- established — jdtls not yet attached, workspace/symbol silent,
+--- unreadable file — as opposed to an entity genuinely lacking any
+--- persistable field, which yields an empty list with `ok` true. Both
+--- cases produce the same empty list on the parser side, which then
+--- disables validation (design doc §6); without this second return value,
+--- the caller would confuse "no error found" with "verified", and would
+--- offer signatures built on properties never checked against the entity.
 function M.fields(entity_name, callback)
   if cache[entity_name] then
     callback(cache[entity_name], true)
@@ -288,8 +286,8 @@ function M.fields(entity_name, callback)
 
   local waiters = pending[entity_name]
   if waiters then
-    -- Une requête est déjà en vol pour cette entité : on s'accroche à sa
-    -- réponse plutôt que d'en émettre une seconde.
+    -- A request is already in flight for this entity: hook onto its
+    -- response instead of firing a second one.
     waiters[#waiters + 1] = callback
     return
   end
@@ -303,19 +301,19 @@ function M.fields(entity_name, callback)
   waiters = { callback }
   pending[entity_name] = waiters
 
-  -- `waiters` identifie cette requête précise : si `M.invalidate` a
-  -- entre-temps décroché `pending[entity_name]` (parce que jdtls a planté
-  -- ou a été redémarré sans jamais répondre — la requête ne rappellera
-  -- alors jamais, et sans ce décrochage `pending[entity_name]` resterait
-  -- occupé pour toujours, empêchant toute nouvelle tentative), une réponse
-  -- tardive et orpheline de cette requête sert quand même ses propres
-  -- callbacks en attente, mais ne touche ni au cache ni à `pending`, qui
-  -- appartiennent désormais à une éventuelle requête plus récente.
+  -- `waiters` identifies this specific request: if `M.invalidate` has in
+  -- the meantime unhooked `pending[entity_name]` (because jdtls crashed
+  -- or restarted without ever responding — the request will then never
+  -- call back, and without this unhooking `pending[entity_name]` would
+  -- stay occupied forever, blocking any further attempt), a late,
+  -- orphaned response from this request still serves its own waiting
+  -- callbacks, but touches neither the cache nor `pending`, which by then
+  -- belong to a possible more recent request.
   local resolved = false
   local function resolve(fields, ok)
-    -- Idempotent : l'appelant a deux chemins d'échec (envoi refusé et
-    -- réponse en erreur) qui pourraient sinon servir les mêmes callbacks
-    -- deux fois.
+    -- Idempotent: the caller has two failure paths (send refused and
+    -- error response) that could otherwise serve the same callbacks
+    -- twice.
     if resolved then
       return
     end
@@ -353,11 +351,10 @@ function M.fields(entity_name, callback)
 
     local fields, bufnr = fields_from_uri(uri, entity_name)
     if fields == nil then
-      -- Extraction échouée (fichier introuvable, URI jdt:// illisible,
-      -- classe absente de l'arbre…) : ne jamais mettre ce résultat en
-      -- cache, pour qu'un appel ultérieur retente au lieu de rester
-      -- bloqué sur un résultat vide indéfiniment — aucun BufWritePost ne
-      -- viendrait jamais l'invalider.
+      -- Extraction failed (file not found, unreadable jdt:// URI, class
+      -- absent from the tree…): never cache this result, so a later call
+      -- retries instead of staying stuck on an empty result forever — no
+      -- BufWritePost would ever invalidate it.
       resolve(nil, false)
       return
     end
@@ -366,22 +363,22 @@ function M.fields(entity_name, callback)
     resolve(fields, true)
   end
 
-  -- `pending` est déjà posé : toute sortie qui ne passerait pas par
-  -- `resolve` laisserait cette entité muette pour le reste de la session,
-  -- et l'exception remonterait jusqu'à `get_completions`, donc à chaque
-  -- frappe. `Client:request` peut lever (handle invalide, client en cours
-  -- d'arrêt) et peut aussi répondre `false` sans jamais rappeler le
-  -- gestionnaire — les deux referment la porte de la même manière.
+  -- `pending` is already set: any exit that doesn't go through `resolve`
+  -- would leave this entity mute for the rest of the session, and the
+  -- exception would propagate up to `get_completions`, so on every
+  -- keystroke. `Client:request` can raise (invalid handle, client
+  -- shutting down) and can also respond `false` without ever calling the
+  -- handler — both close the door the same way.
   local ok, sent = pcall(clients[1].request, clients[1], "workspace/symbol", { query = entity_name }, on_symbols)
   if not ok or sent == false then
     resolve(nil, false)
   end
 end
 
---- Vide l'entrée de cache d'une entité, ou tout le cache si aucun nom donné.
---- Décroche aussi `pending` : une requête en vol qui ne répondra jamais
---- (jdtls planté ou redémarré) ne doit pas bloquer les appels suivants
---- indéfiniment — `M.invalidate` est le mécanisme de reprise.
+--- Clears an entity's cache entry, or the whole cache if no name is given.
+--- Also unhooks `pending`: an in-flight request that will never respond
+--- (jdtls crashed or restarted) must not block later calls indefinitely —
+--- `M.invalidate` is the recovery mechanism.
 function M.invalidate(entity_name)
   if entity_name then
     cache[entity_name] = nil
@@ -393,7 +390,7 @@ function M.invalidate(entity_name)
   end
 end
 
---- Invalide le cache d'une entité dès que son fichier est sauvegardé.
+--- Invalidates an entity's cache as soon as its file is saved.
 function M.setup_autocmds()
   local group = vim.api.nvim_create_augroup("SpringDataEntityCache", { clear = true })
 

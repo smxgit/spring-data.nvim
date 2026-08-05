@@ -1,26 +1,27 @@
--- Analyse d'une chaîne de derived query method, éventuellement incomplète.
+-- Parses a derived query method string, possibly incomplete.
 --
--- Ce module est du Lua pur : il ne référence jamais `vim` et ne dépend ni de
--- Neovim ni de jdtls, ce qui le rend testable sous un interpréteur nu.
+-- This module is pure Lua: it never references `vim` and depends on
+-- neither Neovim nor jdtls, which makes it testable under a bare
+-- interpreter.
 --
--- Le pipeline reproduit PartTree. Le découpage ne consulte jamais la liste
--- des champs : celle-ci sert uniquement à valider les propriétés obtenues.
+-- The pipeline reproduces PartTree. Splitting never consults the field
+-- list: that only ever serves to validate the properties obtained.
 local grammar = require("spring-data.grammar")
 
 local M = {}
 
---- Découpe `text` autour de `keyword`, à la manière de PartTree.split.
+--- Splits `text` around `keyword`, the way PartTree.split does.
 ---
---- Réimplémentation de KEYWORD_TEMPLATE = "(%s)(?=(\p{Lu}|\P{InBASIC_LATIN}))".
---- Lua n'ayant pas de lookahead, la vérification que le mot-clé est suivi
---- d'une majuscule est faite à la main. La classe \P{InBASIC_LATIN}, qui vise
---- les identifiants CJK, est délibérément écartée — voir §5.5 de la spec.
+--- Reimplements KEYWORD_TEMPLATE = "(%s)(?=(\p{Lu}|\P{InBASIC_LATIN}))".
+--- Lua has no lookahead, so checking that the keyword is followed by an
+--- uppercase letter is done by hand. The \P{InBASIC_LATIN} class, aimed at
+--- CJK identifiers, is deliberately left out — see design doc §5.5.
 ---
---- C'est cette règle de casse, et elle seule, qui résout la collision
---- `andrew` : dans « andrewAge », le And est suivi d'un `r` minuscule.
+--- This casing rule, and only this rule, is what resolves the `andrew`
+--- collision: in "andrewAge", And is followed by a lowercase `r`.
 ---
---- Un segment vide en tête est conservé, comme le fait Pattern.split côté
---- Java ; c'est à l'appelant de le filtrer.
+--- A leading empty segment is kept, as Pattern.split does on the Java
+--- side; it's up to the caller to filter it out.
 function M.split_on_keyword(text, keyword)
   local parts = {}
   local segment_start = 1
@@ -45,14 +46,14 @@ function M.split_on_keyword(text, keyword)
   return parts
 end
 
---- Vrai si `s` se termine par `suffix`.
+--- True if `s` ends with `suffix`.
 function M.ends_with(s, suffix)
   return #s >= #suffix and s:sub(-#suffix) == suffix
 end
 
---- Reproduit java.beans.Introspector.decapitalize.
---- Une chaîne dont les deux premiers caractères sont des majuscules est
---- renvoyée intacte, ce qui préserve les acronymes (« URL » reste « URL »).
+--- Reproduces java.beans.Introspector.decapitalize.
+--- A string whose first two characters are uppercase is returned
+--- unchanged, which preserves acronyms ("URL" stays "URL").
 function M.decapitalize(s)
   if s == "" then
     return s
@@ -63,9 +64,9 @@ function M.decapitalize(s)
   return s:sub(1, 1):lower() .. s:sub(2)
 end
 
---- Retire le motif Ignor(ing|e)Case d'une part et signale sa présence.
---- Doit être appelé AVANT la détection du type, comme le fait Part :
---- detectAndSetIgnoreCase précède Type.fromProperty.
+--- Strips the Ignor(ing|e)Case pattern from a part and reports its
+--- presence. Must be called BEFORE type detection, the way Part does:
+--- detectAndSetIgnoreCase precedes Type.fromProperty.
 function M.strip_ignore_case(part)
   for _, keyword in ipairs(grammar.ignore_case) do
     local s, e = part:find(keyword, 1, true)
@@ -76,9 +77,9 @@ function M.strip_ignore_case(part)
   return part, false
 end
 
---- Classe un type Java dans l'une des catégories du filtrage.
---- Tout type non reconnu relève de « unknown » : enum, entité liée, type
---- personnalisé. Seuls List, Set et Collection donnent « collection ».
+--- Classifies a Java type into one of the filtering categories.
+--- Any unrecognised type falls under "unknown": enum, related entity,
+--- custom type. Only List, Set and Collection yield "collection".
 function M.categorize(java_type)
   local base = java_type:match("^([%w_%.]+)") or java_type
   base = base:match("([%w_]+)$") or base
@@ -92,9 +93,9 @@ function M.categorize(java_type)
   return grammar.categories[base] or "unknown"
 end
 
---- Extrait la limitation First/Top du groupe médian du sujet.
---- Reproduit LIMITED_QUERY_TEMPLATE, qui impose l'ordre Distinct puis
---- First/Top et ne s'applique qu'à la catégorie « query ».
+--- Extracts the First/Top limiting clause from the subject's middle group.
+--- Reproduces LIMITED_QUERY_TEMPLATE, which enforces the order Distinct
+--- then First/Top and only applies to the "query" category.
 local function parse_limiting(middle, category)
   if category ~= "query" then
     return nil
@@ -118,21 +119,20 @@ local function parse_limiting(middle, category)
   return nil
 end
 
---- Analyse le sujet et renvoie le reste, c'est-à-dire le prédicat.
+--- Parses the subject and returns the remainder, i.e. the predicate.
 ---
---- Reproduit PREFIX_TEMPLATE :
+--- Reproduces PREFIX_TEMPLATE:
 ---   ^(find|read|…|remove)((\p{Lu}.*?))??By
---- Le groupe médian étant optionnel et réticent, on essaie d'abord sans lui
---- — By collé à l'introducteur —, puis avec, en exigeant une majuscule en
---- première position et en retenant le premier By rencontré.
+--- The middle group being optional and reluctant, we first try without it
+--- — By glued to the introducer — then with it, requiring an uppercase
+--- first character and keeping the first By encountered.
 ---
---- Renvoie nil si aucun introducteur ne correspond ; l'appelant traite alors
---- la chaîne entière comme un prédicat, comme le fait PartTree.
+--- Returns nil if no introducer matches; the caller then treats the whole
+--- string as a predicate, the way PartTree does.
 ---
---- Le groupe médian brut est conservé dans `middle` : c'est de lui que se
---- déduit le fragment encore en cours de frappe dans l'état « subject »
---- (« Dist » dans « findDist »), qui n'est déductible d'aucun des champs
---- déjà normalisés.
+--- The raw middle group is kept in `middle`: it's what the still-being-
+--- typed fragment in the "subject" state ("Dist" in "findDist") is derived
+--- from, which none of the already-normalised fields can provide.
 function M.parse_subject(source)
   for _, intro in ipairs(grammar.introducers) do
     if source:sub(1, #intro.keyword) == intro.keyword then
@@ -162,16 +162,16 @@ function M.parse_subject(source)
   return nil
 end
 
---- Détermine le type de condition d'une part et en extrait la propriété brute.
+--- Determines a part's condition type and extracts its raw property.
 ---
---- Reproduit Part.Type.fromProperty : parcours de grammar.types DANS L'ORDRE,
---- premier type dont un alias satisfait endsWith. C'est l'ordre, et non une
---- règle de plus longue correspondance, qui donne le bon résultat :
---- « ageLessThanEqual » ne se termine pas par « LessThan », donc LESS_THAN
---- est écarté au profit de LESS_THAN_EQUAL.
+--- Reproduces Part.Type.fromProperty: walks grammar.types IN ORDER, first
+--- type whose alias satisfies endsWith. It's the order, not a longest-
+--- match rule, that gives the right result: "ageLessThanEqual" does not
+--- end with "LessThan", so LESS_THAN is passed over in favour of
+--- LESS_THAN_EQUAL.
 ---
---- Sans correspondance, SIMPLE_PROPERTY et la part entière, conformément au
---- dernier `return SIMPLE_PROPERTY` de fromProperty.
+--- With no match, SIMPLE_PROPERTY and the whole part, matching
+--- fromProperty's final `return SIMPLE_PROPERTY`.
 function M.detect_type(part)
   for _, type_entry in ipairs(grammar.types) do
     for _, keyword in ipairs(type_entry.keywords) do
@@ -184,8 +184,9 @@ function M.detect_type(part)
   return grammar.default_type, part
 end
 
---- Retire AllIgnor(ing|e)Case du prédicat entier.
---- Doit précéder tout découpage, comme le fait Predicate.detectAndSetAllIgnoreCase.
+--- Strips AllIgnor(ing|e)Case from the whole predicate.
+--- Must precede any splitting, the way Predicate.detectAndSetAllIgnoreCase
+--- does.
 local function strip_all_ignore_case(predicate)
   for _, keyword in ipairs(grammar.all_ignore_case) do
     local s, e = predicate:find(keyword, 1, true)
@@ -196,8 +197,8 @@ local function strip_all_ignore_case(predicate)
   return predicate, false
 end
 
---- Filtre les segments vides produits par un découpage, à la manière du
---- filter(StringUtils::hasText) appliqué côté Java.
+--- Filters out empty segments produced by a split, the way
+--- filter(StringUtils::hasText) does on the Java side.
 local function compact(segments)
   local out = {}
   for _, segment in ipairs(segments) do
@@ -217,7 +218,7 @@ local function find_field(fields, property)
   return nil
 end
 
---- Vrai si le type de condition accepte la catégorie du champ.
+--- True if the condition type accepts the field's category.
 local function accepts_category(type_entry, category, java_type)
   if type_entry.requires_nullable and grammar.primitives[java_type] then
     return false
@@ -233,10 +234,10 @@ local function accepts_category(type_entry, category, java_type)
   return false
 end
 
---- Construit les paramètres induits par un prédicat.
---- BETWEEN, seul type à deux arguments, produit <propriété>Start et
---- <propriété>End. IN et NOT_IN produisent une Collection du type boxé, un
---- générique Java n'acceptant pas de primitif.
+--- Builds the parameters a predicate implies.
+--- BETWEEN, the only two-argument type, produces <property>Start and
+--- <property>End. IN and NOT_IN produce a Collection of the boxed type,
+--- since a Java generic can't take a primitive.
 local function build_params(type_entry, property, field)
   if type_entry.args == 0 then
     return {}
@@ -263,9 +264,9 @@ local function build_params(type_entry, property, field)
   return { { name = property, java_type = java_type } }
 end
 
---- Analyse la clause de tri.
---- Reproduit OrderBySource : découpage après Asc ou Desc suivi d'une
---- majuscule, direction optionnelle en fin de bloc.
+--- Parses the sort clause.
+--- Reproduces OrderBySource: splitting after Asc or Desc followed by an
+--- uppercase letter, direction optional at the end of a block.
 local function parse_order_by(clause)
   local blocks = {}
   local start = 1
@@ -301,36 +302,36 @@ local function parse_order_by(clause)
   return out
 end
 
---- Valide les propriétés de tri contre la liste des champs.
+--- Validates sort properties against the field list.
 ---
---- Spring résout chaque propriété de tri par PropertyPath exactement comme
---- celles du prédicat : « findByNameOrderByBogusAsc » lève une
---- PropertyReferenceException au démarrage du contexte. Sans cette
---- vérification, la source proposerait une signature qui empêche
---- l'application de démarrer, ce que §7 interdit.
+--- Spring resolves each sort property via PropertyPath exactly like
+--- predicate properties: "findByNameOrderByBogusAsc" raises a
+--- PropertyReferenceException at context startup. Without this check, the
+--- source would offer a signature that keeps the application from
+--- starting, which design doc §7 forbids.
 ---
---- Une propriété vide (« findByNameOrderByAsc ») est signalée quelle que
---- soit la liste des champs : la faute est structurelle, pas une question de
---- résolution, et reste donc détectable quand la validation est dégradée.
+--- An empty property ("findByNameOrderByAsc") is reported regardless of
+--- the field list: the fault is structural, not a resolution question, so
+--- it stays detectable even when validation is degraded.
 local function validate_order_by(order_by, fields, errors)
   for _, entry in ipairs(order_by) do
     if entry.property == "" then
       errors[#errors + 1] = {
         code = "missing_order_property",
-        message = "propriété de tri manquante avant " .. (entry.direction or "la fin"),
+        message = "missing sort property before " .. (entry.direction or "the end"),
       }
     elseif #fields > 0 and not find_field(fields, entry.property) then
       errors[#errors + 1] = {
         code = "unknown_property",
-        message = "propriété de tri inconnue : " .. entry.property,
+        message = "unknown sort property: " .. entry.property,
       }
     end
   end
 end
 
---- Portion du groupe médian du sujet qui n'a encore été reconnue ni comme
---- Distinct ni comme First/Top : c'est ce que l'utilisateur est en train de
---- taper (« Dist » dans « findDist », « Fir » dans « findDistinctFir »).
+--- Portion of the subject's middle group not yet recognised as either
+--- Distinct or First/Top: what the user is currently typing ("Dist" in
+--- "findDist", "Fir" in "findDistinctFir").
 local function subject_residual(middle, category)
   local rest = middle or ""
 
@@ -350,19 +351,19 @@ local function subject_residual(middle, category)
   return rest
 end
 
---- Détermine l'état terminal, c'est-à-dire ce qui est attendu à la position
---- courante. C'est ce qui distingue ce parser de PartTree, lequel ne traite
---- que des chaînes complètes.
+--- Determines the terminal state, i.e. what's expected at the current
+--- position. This is what sets this parser apart from PartTree, which
+--- only ever handles complete strings.
 local function terminal_state(source, subject, result, has_order_by)
   if not subject or not subject.has_by then
     return "subject"
   end
 
-  -- Correctif : un utilisateur qui vient de taper OrderBy attend une
-  -- propriété de tri. split_on_keyword rejette ce cas car OrderBy, en toute
-  -- fin de chaîne, n'est suivi d'aucun caractère — donc d'aucune majuscule —
-  -- si bien que has_order_by reste faux (même règle que pour "andrewAge",
-  -- ici appliquée à une position où elle ne devrait pas s'appliquer).
+  -- Fix: a user who just typed OrderBy is waiting for a sort property.
+  -- split_on_keyword rejects this case because OrderBy, right at the end
+  -- of the string, is followed by no character at all — hence no
+  -- uppercase letter — so has_order_by stays false (the same rule as for
+  -- "andrewAge", here applied at a position where it shouldn't apply).
   if M.ends_with(source, grammar.order_by) then
     return "order_property"
   end
@@ -394,19 +395,19 @@ local function terminal_state(source, subject, result, has_order_by)
   return "after_property"
 end
 
---- Fragment encore en cours de frappe à la position courante : la portion
---- FINALE de `source` qu'une proposition doit REMPLACER au lieu de la
---- prolonger. Chaîne vide quand tout ce qui est tapé est déjà résolu, auquel
---- cas les propositions s'ajoutent à la suite comme avant.
+--- Fragment still being typed at the current position: the FINAL portion
+--- of `source` that a suggestion must REPLACE rather than extend. Empty
+--- string once everything typed is already resolved, in which case
+--- suggestions are appended as before.
 ---
---- Sans lui, taper un seul caractère d'un champ ou d'un mot-clé rendait la
---- propriété irrésolvable et faisait disparaître toute proposition utile.
+--- Without it, typing a single character of a field or keyword made the
+--- property unresolvable and made every useful suggestion disappear.
 ---
---- Le fragment est toujours un suffixe littéral de `source` : c'est ce qui
---- permet au consommateur de ne compter que des caractères. Les deux cas où
---- la propriété retenue n'est PAS un suffixe de la source — un mot-clé
---- explicite la suit (état after_condition), ou un Ignor(ing|e)Case a été
---- retiré du milieu — renvoient donc la chaîne vide.
+--- The fragment is always a literal suffix of `source`: that's what lets
+--- the consumer count characters alone. The two cases where the retained
+--- property is NOT a suffix of the source — an explicit keyword follows it
+--- (after_condition state), or an Ignor(ing|e)Case was stripped from the
+--- middle — therefore return the empty string.
 local function terminal_fragment(source, subject, result, fields, all_ignore_case)
   local state = result.state
 
@@ -417,9 +418,9 @@ local function terminal_fragment(source, subject, result, fields, all_ignore_cas
     return subject_residual(subject.middle, subject.category)
   end
 
-  -- La validation des propriétés est désactivée sans liste de champs (§6) :
-  -- rien ne permet alors de distinguer un fragment d'une propriété achevée,
-  -- et deviner reviendrait à proposer n'importe quoi. On s'abstient.
+  -- Property validation is disabled without a field list (§6): nothing
+  -- then distinguishes a fragment from a completed property, and guessing
+  -- would mean offering anything at all. We abstain.
   if #fields == 0 or all_ignore_case then
     return ""
   end
@@ -443,30 +444,30 @@ local function terminal_fragment(source, subject, result, fields, all_ignore_cas
   return ""
 end
 
---- Analyse une chaîne de derived query method, éventuellement incomplète.
+--- Parses a derived query method string, possibly incomplete.
 ---
---- `fields` est une liste de { name, java_type, annotations }. Elle peut être
---- vide : la validation des propriétés est alors désactivée plutôt que de
---- produire du bruit. Elle n'intervient JAMAIS dans le découpage.
+--- `fields` is a list of { name, java_type, annotations }. It may be
+--- empty: property validation is then disabled rather than producing
+--- noise. It NEVER factors into splitting.
 ---
---- Contrat sur les états d'attente. Dans les états "expect_property" et
---- "order_property", le dernier élément de `predicates` (et le paramètre,
---- l'erreur qui peuvent l'accompagner) peut être un FRAGMENT de ce que
---- l'utilisateur est encore en train de taper, et non une propriété
---- achevée. Ceci n'est pas un bug à corriger dans les données : un And, Or
---- ou OrderBy en toute fin de chaîne est indécidable depuis la seule chaîne
---- — champ complet nommé "…And", ou connecteur pas encore suivi d'une
---- propriété ? — et trancher demanderait de consulter `fields` au moment du
---- découpage, ce que ce module ne fait jamais (voir plus haut). Le
---- découpage suit donc la même règle que PartTree/split_on_keyword : le
---- mot-clé reste attaché au texte s'il n'est suivi d'aucune majuscule, y
---- compris quand il n'est suivi de rien. Les consommateurs DOIVENT se fier à
---- `state` pour savoir si le dernier prédicat est fiable, jamais au seul
---- contenu de `predicates`.
+--- Contract on waiting states. In the "expect_property" and
+--- "order_property" states, the last entry of `predicates` (and the
+--- parameter or error that may go with it) can be a FRAGMENT of what the
+--- user is still typing, not a completed property. This is not a bug to
+--- fix in the data: an And, Or or OrderBy right at the end of a string is
+--- undecidable from the string alone — a complete field named "…And", or
+--- a connector not yet followed by a property? — and settling it would
+--- require consulting `fields` at split time, which this module never does
+--- (see above). Splitting therefore follows the same rule as
+--- PartTree/split_on_keyword: the keyword stays attached to the text if
+--- it isn't followed by an uppercase letter, including when it's followed
+--- by nothing at all. Consumers MUST rely on `state` to know whether the
+--- last predicate is trustworthy, never on the content of `predicates`
+--- alone.
 ---
---- `fragment` complète ce contrat : c'est le suffixe de `source` que
---- l'utilisateur est encore en train de taper (voir terminal_fragment). Il
---- vaut la chaîne vide dès que tout le texte tapé est résolu.
+--- `fragment` completes this contract: it's the suffix of `source` the
+--- user is still typing (see terminal_fragment). It's the empty string as
+--- soon as all typed text is resolved.
 function M.parse(source, fields)
   fields = fields or {}
 
@@ -495,7 +496,7 @@ function M.parse(source, fields)
   if #order_segments > 2 then
     result.errors[#result.errors + 1] = {
       code = "duplicate_order_by",
-      message = "OrderBy ne peut apparaître qu'une seule fois",
+      message = "OrderBy can only appear once",
     }
   end
 
@@ -530,46 +531,46 @@ function M.parse(source, fields)
       if not type_entry.jpa then
         result.errors[#result.errors + 1] = {
           code = "unsupported_keyword",
-          message = type_entry.name .. " n'est pas supporté par Spring Data JPA",
+          message = type_entry.name .. " is not supported by Spring Data JPA",
         }
       end
 
       if #fields > 0 and not field and property ~= "" then
         result.errors[#result.errors + 1] = {
           code = "unknown_property",
-          message = "propriété inconnue : " .. property,
+          message = "unknown property: " .. property,
         }
       end
 
-      -- Un mot-clé que JPA ne supporte pas du tout n'a pas de sens à évaluer
-      -- vis-à-vis du type du champ : ce serait signaler deux fois la même
-      -- faute, la seconde fois pour un motif faux (le champ n'y est pour
-      -- rien). Seul un mot-clé JPA valide peut être incompatible avec un type.
+      -- A keyword JPA doesn't support at all makes no sense to evaluate
+      -- against the field's type: that would report the same fault twice,
+      -- the second time for the wrong reason (the field has nothing to do
+      -- with it). Only a valid JPA keyword can be incompatible with a type.
       if field and type_entry.jpa then
         local category = M.categorize(field.java_type)
         if not accepts_category(type_entry, category, field.java_type) then
           result.errors[#result.errors + 1] = {
             code = "incompatible_type",
-            message = type_entry.name .. " ne s'applique pas à " .. field.java_type,
+            message = type_entry.name .. " does not apply to " .. field.java_type,
           }
         end
       end
 
-      -- IgnoreCase explicite sur un champ qui n'est pas une String : JPA
-      -- refuse au démarrage. Part.detectAndSetIgnoreCase donne le type
-      -- ALWAYS, que JpaQueryCreator.upperIfIgnoreCase traduit par un
-      -- Assert.state — « Unable to ignore case of int types, the property
-      -- 'age' must reference a String ».
+      -- Explicit IgnoreCase on a field that isn't a String: JPA refuses at
+      -- startup. Part.detectAndSetIgnoreCase gives the ALWAYS type, which
+      -- JpaQueryCreator.upperIfIgnoreCase turns into an Assert.state —
+      -- "Unable to ignore case of int types, the property 'age' must
+      -- reference a String".
       --
-      -- AllIgnor(ing|e)Case en est délibérément exclu : PartTree.Predicate
-      -- le propage aux parts sous la forme WHEN_POSSIBLE, branche qui
-      -- n'applique upper() que si le type s'y prête et ne lève jamais.
-      -- Signaler les deux formes de la même manière produirait une erreur
-      -- pour une chaîne que Spring accepte.
+      -- AllIgnor(ing|e)Case is deliberately excluded: PartTree.Predicate
+      -- propagates it to parts as WHEN_POSSIBLE, a branch that only
+      -- applies upper() when the type allows it and never raises.
+      -- Reporting both forms the same way would produce an error for a
+      -- string Spring accepts.
       if field and ignore_case and M.categorize(field.java_type) ~= "string" then
         result.errors[#result.errors + 1] = {
           code = "incompatible_type",
-          message = "IgnoreCase ne s'applique pas à " .. field.java_type,
+          message = "IgnoreCase does not apply to " .. field.java_type,
         }
       end
 
@@ -593,7 +594,7 @@ function M.parse(source, fields)
   return result
 end
 
---- Vrai si le champ porte @Id ou @Column(unique = true).
+--- True if the field is annotated @Id or @Column(unique = true).
 local function is_unique_field(field)
   if not field then
     return false
@@ -612,14 +613,14 @@ local function is_unique_field(field)
   return false
 end
 
---- Déduit le type de retour de la méthode.
+--- Deduces the method's return type.
 ---
---- Optional<T> est réservé aux requêtes dont la cardinalité maximale est
---- garantie à un. La table officielle des types de retour est explicite :
---- « Expects the query method to return one result at most. More than one
---- result triggers an IncorrectResultSizeDataAccessException. » Le cas
---- « aucun résultat » est déjà couvert par List<T>, qui renvoie une liste
---- vide et jamais null.
+--- Optional<T> is reserved for queries whose maximum cardinality is
+--- guaranteed to be one. The official return-type table is explicit:
+--- "Expects the query method to return one result at most. More than one
+--- result triggers an IncorrectResultSizeDataAccessException." The
+--- "no result" case is already covered by List<T>, which returns an empty
+--- list and never null.
 function M.return_type(result, entity_name, opts)
   opts = opts or {}
   local subject = result.subject
@@ -655,11 +656,11 @@ function M.return_type(result, entity_name, opts)
   return "List<" .. entity_name .. ">"
 end
 
---- Vrai si `typed` est un préfixe de `label`, la casse de la première lettre
---- mise à part. Les libellés de champs remontent en lowerCamelCase
---- (« name ») quand les mots-clés sont capitalisés (« Containing »), alors
---- que le fragment tapé porte la casse de la source (« Na ») : seule la
---- première lettre peut donc légitimement différer.
+--- True if `typed` is a prefix of `label`, aside from the case of the
+--- first letter. Field labels come back in lowerCamelCase ("name") while
+--- keywords are capitalised ("Containing"), whereas the typed fragment
+--- carries the source's own casing ("Na"): only the first letter can
+--- legitimately differ.
 local function prefix_matches(typed, label)
   if typed == "" then
     return true
@@ -673,33 +674,34 @@ local function prefix_matches(typed, label)
   return typed:sub(2) == label:sub(2, #typed)
 end
 
---- Traduit l'état terminal en propositions, filtrage par type appliqué.
+--- Turns the terminal state into suggestions, type filtering applied.
 ---
---- Les types dont `jpa` est faux ne sont jamais proposés : REGEX et EXISTS
---- lèveraient « Unsupported keyword » au démarrage, NEAR et WITHIN sont hors
---- périmètre v1.
+--- Types whose `jpa` is false are never offered: REGEX and EXISTS would
+--- raise "Unsupported keyword" at startup, NEAR and WITHIN are out of
+--- scope for v1.
 ---
---- Le jeu neutre des types inconnus n'est pas codé ici : il découle de la
---- colonne `accepts` de grammar.types.
+--- The neutral set for unknown types isn't hardcoded here: it follows from
+--- grammar.types' `accepts` column.
 ---
---- Chaque proposition porte un `replace_length` : le nombre de caractères
---- que son libellé remplace À LA FIN du texte tapé. Zéro — le cas de tout ce
---- qui est déjà résolu — signifie « ajoute à la suite ». C'est ce qui permet
---- de compléter un jeton partiel : sur « findByNameCont », Containing
---- remplace les quatre caractères de « Cont » pour donner
---- « findByNameContaining ». Le consommateur n'a ainsi aucune chirurgie de
---- chaîne à refaire de son côté.
+--- Each suggestion carries a `replace_length`: how many characters its
+--- label replaces AT THE END of the typed text. Zero — the case for
+--- anything already resolved — means "append". This is what makes
+--- completing a partial token possible: on "findByNameCont", Containing
+--- replaces the four characters of "Cont" to yield
+--- "findByNameContaining". The consumer therefore has no string surgery
+--- of its own to redo.
 ---
---- Le fragment sert à FILTRER ce qui est proposé, jamais à redécouper la
---- chaîne : `result` est le seul découpage, et il ne consulte pas les
---- champs. Décomposer le fragment en « champ + reste » relève du choix des
---- propositions, ce que cette fonction fait déjà à partir de `fields`.
+--- The fragment is used to FILTER what gets suggested, never to re-split
+--- the string: `result` is the only splitting that happens, and it never
+--- consults the fields. Breaking the fragment down into "field + rest" is
+--- a suggestion-selection choice, which this function already makes from
+--- `fields`.
 function M.suggestions(result, fields)
   fields = fields or {}
   local fragment = result.fragment or ""
   local out = {}
 
-  --- N'émet la proposition que si `typed` en est un préfixe.
+  --- Only emits the suggestion if `typed` is a prefix of it.
   local function add(typed, label, kind, detail)
     if prefix_matches(typed, label) then
       out[#out + 1] = { label = label, kind = kind, detail = detail, replace_length = #typed }
@@ -712,7 +714,7 @@ function M.suggestions(result, fields)
     end
   end
 
-  --- Conditions compatibles avec le type de `field`.
+  --- Conditions compatible with `field`'s type.
   local function add_conditions(typed, field)
     local category = M.categorize(field.java_type)
     for _, type_entry in ipairs(grammar.types) do
@@ -726,15 +728,15 @@ function M.suggestions(result, fields)
 
   local function add_connectors(typed)
     for _, connector in ipairs(grammar.connectors) do
-      add(typed, connector, "connector", "relie deux prédicats")
+      add(typed, connector, "connector", "connects two predicates")
     end
-    add(typed, grammar.order_by, "connector", "clause de tri")
+    add(typed, grammar.order_by, "connector", "sort clause")
   end
 
-  --- Reste du fragment au-delà du nom de `field`, ou nil si le fragment ne
-  --- prolonge pas ce champ. Sert à proposer ce qui peut suivre une propriété
-  --- dont seule la fin reste à taper : « NameCont » prolonge « name » du
-  --- reste « Cont ».
+  --- Remainder of the fragment beyond `field`'s name, or nil if the
+  --- fragment doesn't extend this field. Used to offer what can follow a
+  --- property whose only its end is left to type: "NameCont" extends
+  --- "name" with the remainder "Cont".
   local function tail_of(field)
     if #fragment <= #field.name or not prefix_matches(field.name, fragment) then
       return nil
@@ -752,24 +754,24 @@ function M.suggestions(result, fields)
         add(fragment, intro.keyword, "modifier", intro.category)
       end
     end
-    -- Distinct et First/Top n'apparaissent qu'une fois : les reproposer
-    -- alors qu'ils sont déjà là ne peut produire qu'un « findDistinctDistinct »
-    -- que Spring rejette.
+    -- Distinct and First/Top each appear only once: offering them again
+    -- once already present could only produce a "findDistinctDistinct"
+    -- that Spring rejects.
     if not (subject and subject.distinct) then
-      add(fragment, grammar.distinct, "modifier", "résultats distincts")
+      add(fragment, grammar.distinct, "modifier", "distinct results")
     end
     if category == "query" and not (subject and subject.max_results) then
       for _, keyword in ipairs(grammar.limiting) do
-        add(fragment, keyword, "modifier", "limite le nombre de résultats")
+        add(fragment, keyword, "modifier", "limits the number of results")
       end
     end
-    add(fragment, "By", "modifier", "introduit le prédicat")
+    add(fragment, "By", "modifier", "introduces the predicate")
     return out
   end
 
-  -- Ces deux états n'ont jamais de fragment : le connecteur ou le OrderBy
-  -- vient d'être tapé, la propriété qui suit est encore intégralement à
-  -- écrire.
+  -- Neither of these two states ever has a fragment: the connector or
+  -- OrderBy was just typed, the property that follows is still entirely
+  -- to be written.
   if state == "expect_property" or state == "order_property" then
     add_fields(fragment)
     return out
@@ -779,12 +781,12 @@ function M.suggestions(result, fields)
     local sort = result.order_by[#result.order_by]
 
     if fragment == "" then
-      -- Une direction déjà posée clôt le bloc : seule une nouvelle propriété
-      -- de tri peut suivre. En proposer une seconde donnerait
-      -- « OrderByAgeAscAsc », dont la deuxième propriété est vide.
+      -- A direction already in place closes the block: only a new sort
+      -- property can follow. Offering a second one would give
+      -- "OrderByAgeAscAsc", whose second property is empty.
       if not (sort and sort.direction) then
         for _, direction in ipairs(grammar.directions) do
-          add("", direction, "direction", "sens du tri")
+          add("", direction, "direction", "sort direction")
         end
       end
       add_fields("")
@@ -796,7 +798,7 @@ function M.suggestions(result, fields)
       local tail = tail_of(field)
       if tail then
         for _, direction in ipairs(grammar.directions) do
-          add(tail, direction, "direction", "sens du tri")
+          add(tail, direction, "direction", "sort direction")
         end
       end
     end
@@ -815,9 +817,9 @@ function M.suggestions(result, fields)
       return out
     end
 
-    -- Propriété encore incomplète : on propose d'un côté les champs dont
-    -- elle est un début, de l'autre ce qui peut suivre un champ qu'elle
-    -- prolonge. Un fragment qui ne correspond à rien ne propose rien.
+    -- Property still incomplete: offer on one hand the fields it's a
+    -- start of, on the other what can follow a field it extends. A
+    -- fragment matching nothing offers nothing.
     add_fields(fragment)
     for _, candidate in ipairs(fields) do
       local tail = tail_of(candidate)
@@ -831,7 +833,7 @@ function M.suggestions(result, fields)
 
   -- after_condition
   if field and M.categorize(field.java_type) == "string" then
-    add("", "IgnoreCase", "keyword", "comparaison insensible à la casse")
+    add("", "IgnoreCase", "keyword", "case-insensitive comparison")
   end
   add_connectors("")
 

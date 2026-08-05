@@ -1,4 +1,4 @@
--- Source blink.cmp pour les derived query methods Spring Data.
+-- blink.cmp source for Spring Data derived query methods.
 local parser = require("spring-data.parser")
 local entity = require("spring-data.entity")
 
@@ -8,7 +8,7 @@ function M.new(opts)
   return setmetatable({ opts = opts or {} }, { __index = M })
 end
 
---- Actif uniquement dans un buffer Java dont l'interface étend un *Repository.
+--- Active only in a Java buffer whose interface extends a *Repository.
 function M:enabled()
   if vim.bo.filetype ~= "java" then
     return false
@@ -16,9 +16,9 @@ function M:enabled()
   return entity.is_repository(0)
 end
 
---- Fragment de méthode déjà tapé, à gauche du curseur.
---- On remonte jusqu'au début de l'identifiant, en s'arrêtant sur tout ce qui
---- ne peut pas faire partie d'un nom de méthode.
+--- Method fragment already typed, to the left of the cursor.
+--- Walks back to the start of the identifier, stopping at anything that
+--- can't be part of a method name.
 local function current_prefix(ctx)
   local line = ctx.line or ""
   local col = ctx.cursor and ctx.cursor[2] or #line
@@ -26,12 +26,12 @@ local function current_prefix(ctx)
   return before:match("([%a%d_]+)$") or ""
 end
 
---- Met en majuscule la première lettre : inverse de parser.decapitalize pour
---- le cas courant. Les champs Java sont déclarés en lowerCamelCase
---- (`private String name`), donc `suggestions()` renvoie leur nom tel quel
---- (« name ») — sans cette remise en forme, la suggestion de propriété
---- produirait un identifiant Java invalide (« findByname » au lieu de
---- « findByName »).
+--- Uppercases the first letter: the inverse of parser.decapitalize for the
+--- common case. Java fields are declared in lowerCamelCase
+--- (`private String name`), so `suggestions()` returns their name as-is
+--- ("name") — without this reshaping, a property suggestion would
+--- produce an invalid Java identifier ("findByname" instead of
+--- "findByName").
 local function capitalize(s)
   if s == "" then
     return s
@@ -39,19 +39,19 @@ local function capitalize(s)
   return s:sub(1, 1):upper() .. s:sub(2)
 end
 
---- Texte complet à proposer pour une suggestion.
+--- Full text to offer for a suggestion.
 ---
---- `replace_length` dit combien de caractères de la FIN du texte tapé le
---- libellé remplace : zéro pour ce qui s'ajoute à la suite (le cas courant),
---- la longueur du jeton en cours de frappe sinon. C'est ainsi que
---- « findByNameCont » + Containing donne « findByNameContaining » et non
---- « findByNameContContaining », et que « fin » + find donne « find » et non
---- l'absurde « finfind ». Le parser étant seul à savoir où commence le
---- fragment, aucune chirurgie de chaîne n'est refaite ici.
+--- `replace_length` says how many characters at the END of the typed text
+--- the label replaces: zero for what simply gets appended (the common
+--- case), the length of the token being typed otherwise. This is how
+--- "findByNameCont" + Containing yields "findByNameContaining" rather than
+--- "findByNameContContaining", and "fin" + find yields "find" rather than
+--- the absurd "finfind". The parser alone knows where the fragment starts,
+--- so no string surgery is redone here.
 ---
---- Les suggestions de nature "property" utilisent le nom du champ tel que
---- déclaré (minuscule initiale) : il faut le capitaliser pour former un
---- segment de méthode valide.
+--- "property" suggestions use the field's name as declared (lowercase
+--- first letter): it has to be capitalised to form a valid method
+--- segment.
 local function fragment_text(prefix, suggestion)
   local candidate = suggestion.label
   if suggestion.kind == "property" then
@@ -66,9 +66,9 @@ local function fragment_text(prefix, suggestion)
   return prefix:sub(1, kept) .. candidate
 end
 
---- Construit le snippet LuaSnip de la signature complète.
---- Les tabstops portent sur les noms de paramètres, pour permettre de les
---- renommer immédiatement après insertion.
+--- Builds the LuaSnip snippet for the full signature.
+--- Tabstops sit on the parameter names, to allow renaming them right
+--- after insertion.
 local function build_snippet(method_name, return_type, params)
   local rendered = {}
   for index, param in ipairs(params) do
@@ -87,30 +87,30 @@ local function build_snippet(method_name, return_type, params)
   )
 end
 
---- États dans lesquels la signature complète peut être proposée : jamais
---- avant qu'une propriété soit sélectionnée, pour ne pas reproduire le
---- `findBy` nu de Spring Tools (issue spring-projects/spring-tools#1014).
+--- States in which the full signature can be offered: never before a
+--- property has been selected, so as not to reproduce Spring Tools' bare
+--- `findBy` (issue spring-projects/spring-tools#1014).
 ---
---- Le dernier prédicat peut être un FRAGMENT dans les états d'attente
---- (`findByNameAnd`, `findByNameOrderBy` laissent le jeton final accroché à
---- la propriété, avec une erreur `unknown_property`) : c'est `result.state`
---- qui distingue un prédicat complet d'un fragment en cours de frappe, pas
---- l'inspection du dernier prédicat — ne jamais contourner cette porte en
---- lisant `result.predicates` directement.
+--- The last predicate can be a FRAGMENT in the waiting states
+--- (`findByNameAnd`, `findByNameOrderBy` leave the final token attached
+--- to the property, with an `unknown_property` error): it's `result.state`
+--- that distinguishes a complete predicate from a fragment still being
+--- typed, not inspecting the last predicate — never bypass this gate by
+--- reading `result.predicates` directly.
 local COMPLETE_STATES = {
   after_property = true,
   after_condition = true,
   order_direction = true,
 }
 
---- Vrai si la signature complète peut être proposée.
+--- True if the full signature can be offered.
 ---
---- `fields_ok` est la condition décisive : sans liste de champs, le parser
---- désactive la validation des propriétés (§6) et `errors` est donc vide
---- parce que RIEN n'a été vérifié, non parce que la méthode est correcte.
---- Confondre les deux fait proposer « List<UserEntity>
---- findByNameCont(Object nameCont); » quand jdtls n'est pas encore attaché.
---- Les fragments, eux, restent proposés : ils ne prétendent à rien.
+--- `fields_ok` is the decisive condition: without a field list, the
+--- parser disables property validation (§6) and `errors` is therefore
+--- empty because NOTHING was checked, not because the method is correct.
+--- Conflating the two would offer "List<UserEntity>
+--- findByNameCont(Object nameCont);" while jdtls isn't attached yet.
+--- Fragments, on the other hand, stay offered: they claim nothing.
 local function offers_signature(result, fields_ok)
   return fields_ok == true
     and COMPLETE_STATES[result.state] == true
@@ -118,17 +118,17 @@ local function offers_signature(result, fields_ok)
     and #result.errors == 0
 end
 
---- Options effectives : celles de `require("spring-data").setup{}`, écrasées
---- par celles déclarées sur le provider blink.
+--- Effective options: those from `require("spring-data").setup{}`,
+--- overridden by those declared on the blink provider.
 ---
---- `M.new` ne reçoit que les seconds — la clé `opts` de la configuration du
---- provider —, presque toujours absentes. Sans cette fusion, une option
---- passée à `setup{}` n'atteignait jamais `parser.return_type` : elle était
---- écrite dans `spring-data.opts` et lue par personne.
+--- `M.new` only receives the latter — the provider config's `opts` key —
+--- almost always absent. Without this merge, an option passed to
+--- `setup{}` never reached `parser.return_type`: it was written to
+--- `spring-data.opts` and read by nobody.
 ---
---- Fusion à la main plutôt que par `vim.tbl_extend` : ce module doit rester
---- chargeable sous un interpréteur nu pour que ses fonctions pures soient
---- testables sans Neovim.
+--- Merged by hand rather than via `vim.tbl_extend`: this module must stay
+--- loadable under a bare interpreter so its pure functions remain
+--- testable without Neovim.
 local function options(provider_opts)
   local merged = {}
   for key, value in pairs(require("spring-data").opts or {}) do
@@ -153,12 +153,12 @@ function M:get_completions(ctx, callback)
   local prefix = current_prefix(ctx)
 
   entity.fields(entity_name, function(fields, fields_ok)
-    -- `entity.fields` répond de manière asynchrone (workspace/symbol vers
-    -- jdtls) : si l'utilisateur a continué de taper ou a changé de contexte
-    -- entre-temps, blink.cmp a appelé la fonction d'annulation renvoyée
-    -- plus bas — `cancelled` empêche alors ce callback tardif d'invoquer
-    -- `callback` avec un résultat périmé, calculé sur un `prefix` qui ne
-    -- correspond plus à ce qui est affiché.
+    -- `entity.fields` responds asynchronously (workspace/symbol to
+    -- jdtls): if the user kept typing or the context changed in the
+    -- meantime, blink.cmp already called the cancellation function
+    -- returned below — `cancelled` then keeps this late callback from
+    -- invoking `callback` with a stale result, computed against a
+    -- `prefix` that no longer matches what's on screen.
     if cancelled then
       return
     end
@@ -166,7 +166,7 @@ function M:get_completions(ctx, callback)
     local result = parser.parse(prefix, fields)
     local items = {}
 
-    -- Fragments : propriétés, mots-clés, connecteurs, directions.
+    -- Fragments: properties, keywords, connectors, directions.
     for _, suggestion in ipairs(parser.suggestions(result, fields)) do
       local label = fragment_text(prefix, suggestion)
       items[#items + 1] = {
@@ -179,8 +179,8 @@ function M:get_completions(ctx, callback)
       }
     end
 
-    -- Signature complète : jamais avant qu'une propriété soit sélectionnée,
-    -- pour ne pas reproduire le `findBy` nu de Spring Tools (issue #1014).
+    -- Full signature: never before a property has been selected, so as
+    -- not to reproduce Spring Tools' bare `findBy` (issue #1014).
     if offers_signature(result, fields_ok) then
       local return_type = parser.return_type(result, entity_name, options(self.opts))
       items[#items + 1] = {
@@ -221,10 +221,10 @@ function M:get_completions(ctx, callback)
   end
 end
 
---- Fonctions pures de ce module, exposées pour tests/source_spec.lua.
---- blink.cmp n'appelle que new/enabled/get_completions : elles n'ont aucune
---- autre raison d'être publiques, mais elles portent deux des trois défauts
---- que la relecture finale a relevés ici et doivent donc être épinglées.
+--- Pure functions of this module, exposed for tests/source_spec.lua.
+--- blink.cmp only ever calls new/enabled/get_completions: these have no
+--- other reason to be public, but they carry two of the three defects the
+--- final review found here and must therefore be pinned.
 M.internal = {
   current_prefix = current_prefix,
   capitalize = capitalize,

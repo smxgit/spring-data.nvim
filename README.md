@@ -113,6 +113,28 @@ by `List<T>`, which returns an empty list and never `null`. Emitting `Optional<T
 for a non-unique field would produce code that starts fine and then fails as soon
 as a second matching row exists.
 
+## Diagnostics
+
+```vim
+:checkhealth spring-data
+```
+
+Completion degrades silently when the entity's field list can't be established:
+no property and no condition are offered, only `And` / `Or` / `OrderBy`. That
+output is indistinguishable from a genuine parse, so the health check walks the
+same path `entity.fields` walks and reports which layer gave up — treesitter
+parser, `jdtls` client, `workspace/symbol` lookup, entity buffer, class
+declaration, extracted fields.
+
+It reads **loaded buffers**, not the current window: `:checkhealth` opens its
+own buffer, so keep the repository you want to diagnose open somewhere and run
+the check from anywhere.
+
+Known limitation it reports as a warning: fields inherited from a
+`@MappedSuperclass` parent are not extracted. `extract_fields` only walks the
+`field_declaration` nodes that are direct children of the entity class's own
+body.
+
 ## Out of scope
 
 Deliberately absent from this version:

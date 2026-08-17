@@ -639,6 +639,21 @@ function M.return_type(result, entity_name, opts)
     return opts.delete_return_type == "long" and "long" or "void"
   end
 
+  -- `stream` carries no meaning of its own in Spring: the appendix of
+  -- query subject keywords groups it with find / read / get / query /
+  -- search as one "general query method", PartTree's QUERY_PATTERN
+  -- accepts the six interchangeably, and the documentation's own Stream
+  -- example is spelled readAllByFirstnameNotNull(). Stream<T> is a return
+  -- type the developer chooses, never one the keyword imposes — hence an
+  -- option, off by default.
+  --
+  -- Placed ahead of the cardinality rules on purpose: Optional<T> is not
+  -- a narrower Stream<T> but a different contract, so a limiting clause
+  -- or a unique field must not silently override an explicit choice.
+  if subject.introducer == "stream" and opts.stream_return_type == "Stream" then
+    return "Stream<" .. entity_name .. ">"
+  end
+
   if subject.max_results == 1 then
     return "Optional<" .. entity_name .. ">"
   end

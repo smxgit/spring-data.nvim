@@ -89,6 +89,7 @@ sources = {
 | Option | Default | Description |
 |---|---|---|
 | `delete_return_type` | `"void"` | Return type of `deleteBy` / `removeBy` methods. `"long"` to return the number of rows deleted. |
+| `stream_return_type` | `"List"` | Return type of `streamBy` methods. `"Stream"` to emit `Stream<T>`. |
 
 These options are declared in `setup{}`. They can also be set on the blink provider,
 via its `opts` key, which then wins over `setup{}`.
@@ -100,10 +101,43 @@ via its `opts` key, which then wins over `setup{}`.
 | `countBy…` | `long` |
 | `existsBy…` | `boolean` |
 | `deleteBy…` / `removeBy…` | `void`, or `long` depending on the option |
+| `streamBy…` | `List<T>`, or `Stream<T>` depending on the option |
 | `findFirstBy…` / `findTopBy…` / `findTop1By…` | `Optional<T>` |
 | `findTop5By…` | `List<T>` |
 | Single predicate, no `Or`, equality on an `@Id` or `@Column(unique = true)` field | `Optional<T>` |
 | Every other case | `List<T>` |
+
+### `streamBy` and `Stream<T>`
+
+`stream_return_type = "Stream"` makes `streamBy…` emit `Stream<UserEntity>`
+instead of `List<UserEntity>`. It is off by default, because Spring does not tie
+the keyword to the type: the appendix of query subject keywords groups
+`stream…By` with `find…By`, `read…By`, `get…By`, `query…By` and `search…By` as
+one *"general query method"*, `PartTree`'s `QUERY_PATTERN` accepts the six
+interchangeably, and the documentation's own streaming example is spelled
+`readAllByFirstnameNotNull()`. `Stream<T>` is a return type the developer
+chooses, not one the keyword imposes.
+
+It also comes with obligations the plugin can't write for you:
+
+```java
+@Transactional
+public void process() {
+    try (Stream<UserEntity> users = repository.streamByAgeGreaterThan(18)) {
+        users.forEach(…);
+    }
+}
+```
+
+Without a surrounding transaction Spring throws
+`InvalidDataAccessApiUsageException: You're trying to execute a streaming query
+method without a surrounding transaction…`, and without the try-with-resources
+the underlying `ResultSet` leaks.
+
+The option only affects `streamBy…`; the five other query keywords keep
+returning `List<T>`. When it is on, `Stream<T>` also wins over the `Optional<T>`
+rules below — a limiting clause or a unique field makes a stream shorter, not a
+different contract.
 
 `Optional<T>` is deliberately reserved for queries whose maximum cardinality is
 guaranteed to be one. The Spring documentation is explicit: *"Expects the query

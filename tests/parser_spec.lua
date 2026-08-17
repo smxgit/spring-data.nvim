@@ -607,6 +607,43 @@ t.describe("parser › return_type", function()
     t.eq(rt("deleteByName", { delete_return_type = "long" }), "long")
   end)
 
+  t.it("gives List for stream by default", function()
+    -- `stream` is one of the six general query keywords, strictly
+    -- equivalent to `find` in PartTree: nothing in Spring makes it return
+    -- a Stream on its own.
+    t.eq(rt("streamByName"), "List<UserEntity>")
+  end)
+
+  t.it("gives Stream for stream when the option asks for it", function()
+    t.eq(rt("streamByName", { stream_return_type = "Stream" }), "Stream<UserEntity>")
+  end)
+
+  t.it("leaves the other query keywords alone under that option", function()
+    local opts = { stream_return_type = "Stream" }
+    t.eq(rt("findByName", opts), "List<UserEntity>")
+    t.eq(rt("readByName", opts), "List<UserEntity>")
+    t.eq(rt("getByName", opts), "List<UserEntity>")
+    t.eq(rt("queryByName", opts), "List<UserEntity>")
+    t.eq(rt("searchByName", opts), "List<UserEntity>")
+  end)
+
+  t.it("keeps Stream over the Optional rules", function()
+    -- A Stream stays a Stream whatever the cardinality: Optional<T> would
+    -- be a different contract, not a narrower one.
+    local opts = { stream_return_type = "Stream" }
+    t.eq(rt("streamById", opts), "Stream<UserEntity>")
+    t.eq(rt("streamByEmail", opts), "Stream<UserEntity>")
+    t.eq(rt("streamFirstByName", opts), "Stream<UserEntity>")
+    t.eq(rt("streamTop5ByName", opts), "Stream<UserEntity>")
+  end)
+
+  t.it("never gives Stream to count, exists or delete", function()
+    local opts = { stream_return_type = "Stream" }
+    t.eq(rt("countByName", opts), "long")
+    t.eq(rt("existsByName", opts), "boolean")
+    t.eq(rt("deleteByName", opts), "void")
+  end)
+
   t.it("gives Optional for First and Top without a number", function()
     t.eq(rt("findFirstByName"), "Optional<UserEntity>")
     t.eq(rt("findTopByName"), "Optional<UserEntity>")

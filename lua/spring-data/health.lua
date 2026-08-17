@@ -305,12 +305,9 @@ local function check_entity_source(client, entity_name)
 
   local super = superclass_of(entity_bufnr, entity_name)
   if super then
-    health.warn(string.format("%s extends %s", entity_name, super), {
-      "extract_fields only walks field_declaration nodes that are direct",
-      "children of this class's body: fields inherited from a",
-      "@MappedSuperclass parent are never seen — neither suggested nor",
-      "accepted when typed by hand.",
-    })
+    health.info(string.format("  extends %s — the chain is walked upwards", super))
+    health.info("  (only ancestors annotated @MappedSuperclass or @Entity")
+    health.info("   contribute their fields, per the Jakarta Persistence spec)")
   end
 end
 
@@ -332,20 +329,29 @@ local function check_fields(entity_name)
   local fields, ok = captured[1] or {}, captured[2]
 
   if not ok then
-    health.error(string.format("entity.fields(%s): ok=false", entity_name), {
-      "The field list could NOT be established. The parser then disables",
-      "property validation: completion offers no field and no condition,",
-      "only And / Or / OrderBy.",
+    health.error(string.format("entity.fields(%s): ok=false — chain incomplete", entity_name), {
+      "The field list could NOT be fully established: either the entity",
+      "itself is unreachable, or one of its ancestors is (a parent living",
+      "in a jar, such as AbstractPersistable, or indexing still running).",
+      "Fields listed below, if any, are what could be gathered — enough",
+      "to suggest properties, but no full signature is offered and the",
+      "result is not cached, so the next keystroke retries.",
     })
+    if #fields > 0 then
+      for _, field in ipairs(fields) do
+        health.info(string.format("  %s %s", field.java_type, field.name))
+      end
+    end
     return
   end
 
   if #fields == 0 then
     health.error(string.format("entity.fields(%s): ok=true but 0 field", entity_name), {
-      "The class was found and holds no persistable field of its own.",
-      "This empty list IS cached until the entity's file is written.",
-      "Likely causes: every field inherited from a parent class, or all",
-      "of them static/transient.",
+      "The whole chain was walked and holds no persistable field.",
+      "This empty list IS cached until one of its files is written.",
+      "Likely causes: every field sits in a parent annotated with neither",
+      "@MappedSuperclass nor @Entity (whose state the JPA spec excludes),",
+      "or all of them are static/transient.",
     })
     return
   end

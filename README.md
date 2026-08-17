@@ -130,10 +130,51 @@ It reads **loaded buffers**, not the current window: `:checkhealth` opens its
 own buffer, so keep the repository you want to diagnose open somewhere and run
 the check from anywhere.
 
-Known limitation it reports as a warning: fields inherited from a
-`@MappedSuperclass` parent are not extracted. `extract_fields` only walks the
-`field_declaration` nodes that are direct children of the entity class's own
-body.
+## Entity resolution
+
+`workspace/symbol` matches on the simple name alone and answers everything on
+the classpath. Querying `Document` on a Spring project returns dozens of
+results, and the first one whose name matches exactly may well be
+`BootstrapConfigFileApplicationListener$Document`, a nested class inside a
+Spring Cloud jar. jdtls decompiles it, treesitter parses it, and completion
+ends up offering the fields of a class the user never wrote.
+
+Java's own resolution rules break the tie: an unqualified type name is either
+imported explicitly, or declared in the same package, or covered by a wildcard
+import. The repository's file therefore says where its entity lives, and
+candidate packages are tried in that order.
+
+The file path is the discriminator. Maven and Gradle both require a source file
+to sit in the directory matching its package, so a real `com.example.Document`
+can only live in `com/example/Document.java`. That single check rejects
+homonyms from other packages, nested classes — whose file is named after the
+outer class — and anything coming from a jar.
+
+`jdt://` documents are never accepted, even when nothing else matches. An
+entity shipped only as a compiled artifact is therefore not supported, which
+buys the guarantee that every suggested field is one you actually declared.
+
+## Inheritance
+
+The entity's inheritance chain is walked upwards: a field declared in a
+`@MappedSuperclass` parent — `id`, audit timestamps, a version column — is
+suggested and validated like any other.
+
+Only ancestors annotated `@MappedSuperclass` or `@Entity` contribute their
+fields. The Jakarta Persistence specification excludes the state of a
+superclass that is neither: such a class is plain object-model infrastructure,
+and offering its fields would suggest query methods Spring rejects at startup.
+A non-annotated class in the middle of the chain is still walked *through* —
+`Entity → non-entity → MappedSuperclass` is legal — only its own fields are
+dropped.
+
+A field redeclared in a subclass shadows the inherited one, with the
+subclass's type, as in Java.
+
+When an ancestor can't be reached — a parent living in a jar such as
+`AbstractPersistable`, or jdtls still indexing — the fields gathered so far are
+still used to suggest properties, but no full signature is offered and nothing
+is cached, so the next keystroke retries.
 
 ## Out of scope
 
@@ -157,15 +198,26 @@ Never offered, because they make the application fail to start:
 
 ## Tests
 
+Two suites, kept apart on purpose.
+
 ```bash
-luajit tests/run.lua
+luajit tests/run.lua              # pure, no Neovim
+nvim --headless -l tests/run_nvim.lua   # treesitter over Java fixtures
 ```
 
-`grammar.lua` and `parser.lua` never reference `vim`: the suite runs without
-Neovim. Neither does `source.lua`, outside the bodies of `enabled` and
+`grammar.lua` and `parser.lua` never reference `vim`: the first suite runs
+without Neovim. Neither does `source.lua`, outside the bodies of `enabled` and
 `get_completions`, so its pure functions — current prefix, inserted-text
 composition, snippet, option merging — are covered by the same suite. These
 references to `vim` must never surface at module-load time.
 
-`entity.lua` and the rest of `source.lua` are verified by hand in a Spring Boot
-project.
+The second suite covers `entity.lua`, which needs a real Neovim to run
+treesitter over the Java fixtures in `tests/fixtures/`. It needs **no jdtls**:
+the inheritance walk takes its class resolver as a parameter — jdtls in
+production, a fixture map in the tests — so field extraction, the
+`@MappedSuperclass` filtering and the shadowing rules are all exercised without
+a language server.
+
+What no suite covers, and is verified by hand in a Spring Boot project: the
+jdtls resolver itself (`workspace/symbol` and buffer loading), the blink.cmp
+plumbing in `source.lua`, and `health.lua`.

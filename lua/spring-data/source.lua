@@ -152,7 +152,11 @@ function M:get_completions(ctx, callback)
 
   local prefix = current_prefix(ctx)
 
-  entity.fields(entity_name, function(fields, fields_ok)
+  -- The repository's buffer is what resolves the entity's package: an
+  -- unqualified `Document` is either imported explicitly or declared in
+  -- this very package, and that is the only thing telling it apart from
+  -- the homonyms jdtls returns from every jar on the classpath.
+  entity.fields(entity_name, bufnr, function(fields, fields_ok)
     -- `entity.fields` responds asynchronously (workspace/symbol to
     -- jdtls): if the user kept typing or the context changed in the
     -- meantime, blink.cmp already called the cancellation function

@@ -205,7 +205,18 @@ local function check_jdtls()
 end
 
 --- Layers 4 to 6, per entity: symbol lookup, entity buffer, declaration.
-local function check_entity_source(client, entity_name)
+local function check_entity_source(client, entity_name, repo_bufnr)
+  local packages = entity.internal.type_packages(repo_bufnr, entity_name)
+  if #packages == 0 then
+    health.error(string.format("%s: no candidate package", entity_name), {
+      "Neither an explicit import nor a package declaration names it in",
+      "the repository's file. Without that, every symbol jdtls returns is",
+      "equally plausible and none can be chosen.",
+    })
+    return
+  end
+  health.info("  candidate packages: " .. table.concat(packages, ", "))
+
   local response, err = query_symbols(client, entity_name)
   if err == "timeout" then
     health.error(string.format("workspace/symbol(%s): no answer after %dms", entity_name, TIMEOUT_MS), {
@@ -232,39 +243,46 @@ local function check_entity_source(client, entity_name)
     return
   end
 
-  local exact
-  local names = {}
+  -- Every same-named symbol, whether or not it is the right one. On a
+  -- Spring project a common name like "Document" matches dozens of
+  -- unrelated classes across the dependencies.
+  local homonyms = {}
   for _, symbol in ipairs(results) do
-    names[#names + 1] = tostring(symbol.name)
-    if symbol.name == entity_name and not exact then
-      exact = symbol
+    if symbol.name == entity_name then
+      homonyms[#homonyms + 1] = (symbol.location and symbol.location.uri) or "<no location.uri>"
     end
   end
 
-  if not exact then
-    health.error(string.format("workspace/symbol(%s): no exact name match", entity_name), {
-      string.format("%d result(s) returned: %s", #results, table.concat(names, ", ")),
-      "entity.lua keeps a symbol only when symbol.name equals the entity",
-      "name exactly, so none of these is used.",
-    })
-    return
-  end
+  local uri = entity.internal.select_symbol(results, packages, entity_name)
 
-  health.ok(string.format("workspace/symbol(%s): %d result(s), exact match found", entity_name, #results))
-
-  local uri = exact.location and exact.location.uri
   if not uri then
-    health.error(string.format("%s: matching symbol carries no location.uri", entity_name))
+    local advice = {
+      string.format("%d result(s), %d of them named exactly %q, none of which",
+        #results, #homonyms, entity_name),
+      "is a source file under one of the candidate packages.",
+      "",
+      "A real com.example." .. entity_name .. " can only live in",
+      "com/example/" .. entity_name .. ".java: that is what rules out",
+      "homonyms from other packages, nested classes, and jars.",
+      "",
+      "Rejected candidates:",
+    }
+    for index, candidate in ipairs(homonyms) do
+      if index > 8 then
+        advice[#advice + 1] = string.format("  … and %d more", #homonyms - 8)
+        break
+      end
+      advice[#advice + 1] = "  " .. candidate
+    end
+    health.error(string.format("workspace/symbol(%s): no usable declaration", entity_name), advice)
     return
   end
 
+  health.ok(string.format(
+    "workspace/symbol(%s): %d result(s), %d homonym(s), one selected",
+    entity_name, #results, #homonyms
+  ))
   health.info("  uri: " .. uri)
-  if uri:match("^jdt://") then
-    health.warn("  the entity comes from a jar, not from a source file", {
-      "Its content is not readable as a plain buffer: field extraction",
-      "will fail.",
-    })
-  end
 
   local uri_ok, entity_bufnr = pcall(vim.uri_to_bufnr, uri)
   if not uri_ok or not entity_bufnr then
@@ -305,21 +323,18 @@ local function check_entity_source(client, entity_name)
 
   local super = superclass_of(entity_bufnr, entity_name)
   if super then
-    health.warn(string.format("%s extends %s", entity_name, super), {
-      "extract_fields only walks field_declaration nodes that are direct",
-      "children of this class's body: fields inherited from a",
-      "@MappedSuperclass parent are never seen — neither suggested nor",
-      "accepted when typed by hand.",
-    })
+    health.info(string.format("  extends %s — the chain is walked upwards", super))
+    health.info("  (only ancestors annotated @MappedSuperclass or @Entity")
+    health.info("   contribute their fields, per the Jakarta Persistence spec)")
   end
 end
 
 --- Layer 7: the result the completion source actually consumes.
-local function check_fields(entity_name)
+local function check_fields(entity_name, repo_bufnr)
   entity.invalidate(entity_name)
 
   local fired, captured = await(function(resolve)
-    entity.fields(entity_name, function(fields, ok)
+    entity.fields(entity_name, repo_bufnr, function(fields, ok)
       resolve(fields, ok)
     end)
   end)
@@ -332,20 +347,29 @@ local function check_fields(entity_name)
   local fields, ok = captured[1] or {}, captured[2]
 
   if not ok then
-    health.error(string.format("entity.fields(%s): ok=false", entity_name), {
-      "The field list could NOT be established. The parser then disables",
-      "property validation: completion offers no field and no condition,",
-      "only And / Or / OrderBy.",
+    health.error(string.format("entity.fields(%s): ok=false — chain incomplete", entity_name), {
+      "The field list could NOT be fully established: either the entity",
+      "itself is unreachable, or one of its ancestors is (a parent living",
+      "in a jar, such as AbstractPersistable, or indexing still running).",
+      "Fields listed below, if any, are what could be gathered — enough",
+      "to suggest properties, but no full signature is offered and the",
+      "result is not cached, so the next keystroke retries.",
     })
+    if #fields > 0 then
+      for _, field in ipairs(fields) do
+        health.info(string.format("  %s %s", field.java_type, field.name))
+      end
+    end
     return
   end
 
   if #fields == 0 then
     health.error(string.format("entity.fields(%s): ok=true but 0 field", entity_name), {
-      "The class was found and holds no persistable field of its own.",
-      "This empty list IS cached until the entity's file is written.",
-      "Likely causes: every field inherited from a parent class, or all",
-      "of them static/transient.",
+      "The whole chain was walked and holds no persistable field.",
+      "This empty list IS cached until one of its files is written.",
+      "Likely causes: every field sits in a parent annotated with neither",
+      "@MappedSuperclass nor @Entity (whose state the JPA spec excludes),",
+      "or all of them are static/transient.",
     })
     return
   end
@@ -392,8 +416,11 @@ function M.check()
         vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":t"),
         entity_name
       ))
+      -- The repository's own buffer is kept alongside the name: it is
+      -- what resolves the entity's package, so the probe below must run
+      -- against the same buffer the completion source would use.
       if not entities[entity_name] then
-        entities[entity_name] = true
+        entities[entity_name] = bufnr
         order[#order + 1] = entity_name
       end
     end
@@ -415,8 +442,8 @@ function M.check()
 
   for _, entity_name in ipairs(order) do
     health.start("Entity " .. entity_name)
-    check_entity_source(client, entity_name)
-    check_fields(entity_name)
+    check_entity_source(client, entity_name, entities[entity_name])
+    check_fields(entity_name, entities[entity_name])
   end
 end
 

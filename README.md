@@ -29,15 +29,21 @@ will interpret it at runtime.
 Prerequisites: nvim-jdtls attached to the Java buffer, blink.cmp as the completion
 engine, the `java` treesitter parser installed.
 
+Current release: **v0.1.0**. The version is below 1.0 and the API is not frozen —
+see [Stability](#stability) — so pinning it is the safe default.
+
 ### With `vim.pack` (Neovim ≥ 0.12)
 
 ```lua
 vim.pack.add({
-  { src = "https://github.com/smxgit/spring-data.nvim" },
+  { src = "https://github.com/smxgit/spring-data.nvim", version = "v0.1.0" },
 })
 
 require("spring-data").setup({})
 ```
+
+Drop `version` to track the default branch, or pass
+`version = vim.version.range("0.1")` to take patch releases as they land.
 
 ### With lazy.nvim / LazyVim
 
@@ -46,9 +52,14 @@ require("spring-data").setup({})
   "smxgit/spring-data.nvim",
   main = "spring-data",
   ft = "java",
+  version = "*",
   opts = {},
 }
 ```
+
+`version = "*"` follows the latest tagged release, so it needs no editing when a
+new one ships; write `version = "v0.1.0"` to stay on this exact one, or drop the
+key to track the default branch.
 
 `opts = {}` is enough: lazy.nvim automatically calls
 `require("spring-data").setup(opts)`. `main` is spelled out explicitly to remove
@@ -241,6 +252,14 @@ Never offered, because they make the application fail to start:
   present in the documentation's table, inherited from `spring-data-commons`, but
   absent from `JpaQueryCreator`'s `switch`, which then raises
   `IllegalArgumentException: Unsupported keyword`.
+
+## Stability
+
+The version is below 1.0 and the API is not frozen. `delete_return_type` and
+`stream_return_type` both existed and were removed, in favour of offering every
+candidate return type in the completion menu — a decision that belongs to the
+call site, not to a config file. Expect that kind of change while the major
+version stays at zero, and pin a release rather than the default branch.
 
 ## Tests
 

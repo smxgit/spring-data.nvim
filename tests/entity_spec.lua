@@ -23,7 +23,11 @@ end
 --- Resolver over the fixtures: maps a simple class name to its buffer, or
 --- nil when the class has no fixture — which stands for a class jdtls
 --- can't reach (living in a jar, or not indexed yet).
-local function fixture_resolver(class_name, callback)
+---
+--- Packages are ignored here: choosing among homonyms is select_symbol's
+--- job and is tested on its own. The fixtures are flat, one class per
+--- name.
+local function fixture_resolver(class_name, _packages, callback)
   local path = FIXTURES .. class_name .. ".java"
   if vim.fn.filereadable(path) == 0 then
     callback(nil)
@@ -44,7 +48,7 @@ end
 --- Runs the walk synchronously: fixture_resolver never defers.
 local function collect(class_name)
   local captured
-  internal.collect_fields(class_name, fixture_resolver, function(fields, ok, visited)
+  internal.collect_fields(class_name, { "com.example" }, fixture_resolver, function(fields, ok, visited)
     captured = { fields = fields, ok = ok, visited = visited }
   end)
   return captured
@@ -161,6 +165,88 @@ t.describe("collect_fields", function()
   t.it("reports every buffer visited, for cache invalidation", function()
     local got = collect("UserEntity")
     t.eq(#got.visited, 3)
+  end)
+end)
+
+t.describe("type_packages", function()
+  t.it("falls back to the file's own package", function()
+    t.eq(internal.type_packages(fixture("DocumentRepository"), "Document"), { "com.example" })
+  end)
+
+  t.it("puts an explicit import first, then the own package, then wildcards", function()
+    t.eq(internal.type_packages(fixture("ImportingRepository"), "Document"), {
+      "com.example.model",
+      "com.example.repository",
+      "com.example.legacy",
+    })
+  end)
+
+  t.it("ignores imports of other types", function()
+    -- java.util.List is imported but isn't the type being resolved
+    local packages = internal.type_packages(fixture("ImportingRepository"), "Document")
+    for _, package_name in ipairs(packages) do
+      t.truthy(package_name ~= "java.util", "unrelated import leaked")
+    end
+  end)
+end)
+
+t.describe("select_symbol", function()
+  -- Shape of what jdtls answers, reduced to what the choice depends on.
+  local function symbol(name, uri)
+    return { name = name, location = { uri = uri } }
+  end
+
+  local JAR = "jdt://contents/spring-cloud-context-5.0.2.jar/org.springframework.cloud.bootstrap/"
+    .. "BootstrapConfigFileApplicationListener.java?=snowapi/x%3Corg.springframework.cloud.bootstrap"
+    .. "%28BootstrapConfigFileApplicationListener$Document.class"
+  local MINE = "file:///home/sam/proj/src/main/java/com/example/Document.java"
+
+  t.it("prefers a source file in the expected package over a jar", function()
+    local chosen = internal.select_symbol({
+      symbol("Document", JAR),
+      symbol("Document", MINE),
+    }, { "com.example" }, "Document")
+    t.eq(chosen, MINE)
+  end)
+
+  t.it("never returns a jdt:// uri, even alone", function()
+    t.eq(internal.select_symbol({ symbol("Document", JAR) }, { "com.example" }, "Document"), nil)
+  end)
+
+  t.it("rejects a homonym sitting in another package", function()
+    t.eq(internal.select_symbol({
+      symbol("Document", "file:///home/sam/proj/src/main/java/com/other/Document.java"),
+    }, { "com.example" }, "Document"), nil)
+  end)
+
+  t.it("rejects a nested class whose file is named after the outer class", function()
+    t.eq(internal.select_symbol({
+      symbol("Document", "file:///home/sam/proj/src/main/java/com/example/Outer.java"),
+    }, { "com.example" }, "Document"), nil)
+  end)
+
+  t.it("honours package priority order", function()
+    local first = "file:///home/sam/proj/src/main/java/com/example/model/Document.java"
+    local second = "file:///home/sam/proj/src/main/java/com/example/repository/Document.java"
+    -- listed second in the results, but its package ranks first
+    t.eq(internal.select_symbol({
+      symbol("Document", second),
+      symbol("Document", first),
+    }, { "com.example.model", "com.example.repository" }, "Document"), first)
+  end)
+
+  t.it("ignores symbols whose name differs", function()
+    t.eq(internal.select_symbol({
+      symbol("DocumentEntity", "file:///home/sam/proj/src/main/java/com/example/Document.java"),
+    }, { "com.example" }, "Document"), nil)
+  end)
+
+  t.it("returns nil on an empty result set", function()
+    t.eq(internal.select_symbol({}, { "com.example" }, "Document"), nil)
+  end)
+
+  t.it("returns nil when no package candidate is known", function()
+    t.eq(internal.select_symbol({ symbol("Document", MINE) }, {}, "Document"), nil)
   end)
 end)
 

@@ -99,6 +99,15 @@ local pending = {}
 -- nothing useful lives ten levels up a JPA hierarchy.
 local MAX_DEPTH = 10
 
+--- Cache key: the entity's fully qualified name, as far as it is known.
+---
+--- The simple name alone would make two homonymous entities living in
+--- different packages of the same project share one entry — the very
+--- confusion this module now works to avoid everywhere else.
+local function cache_key(entity_name, packages)
+  return (packages[1] or "?") .. "." .. entity_name
+end
+
 --- Treesitter query locating a class by its simple name, capturing the
 --- declaration node itself so annotations and `extends` can be read off
 --- it. The name is filtered afterwards (strict equality with the class
@@ -183,6 +192,123 @@ local function superclass_of(class_node, bufnr)
           -- package: both are cut back to the simple name.
           return text:gsub("<.*$", ""):match("([%w_]+)%s*$")
         end
+      end
+    end
+  end
+  return nil
+end
+
+--- Package and import declarations of a Java file, as raw text.
+local HEADER_QUERY = [[
+(package_declaration) @package
+(import_declaration) @import
+]]
+
+--- Packages a simple type name may resolve to, most likely first.
+---
+--- Java guarantees an unqualified type name is either imported
+--- explicitly, or declared in the same package, or covered by a wildcard
+--- import. That guarantee is the only reliable way to tell the user's
+--- `Document` entity apart from the dozens of unrelated classes sharing
+--- that name across the dependencies — workspace/symbol answers all of
+--- them, undifferentiated.
+---
+--- Order matters and encodes Java's own resolution rules: an explicit
+--- single-type import shadows everything, the file's own package comes
+--- next, wildcards last.
+local function type_packages(bufnr, type_name)
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr, "java")
+  if not ok or not parser then
+    return {}
+  end
+
+  local tree = parser:parse()[1]
+  if not tree then
+    return {}
+  end
+
+  local query_ok, query = pcall(vim.treesitter.query.parse, "java", HEADER_QUERY)
+  if not query_ok then
+    return {}
+  end
+
+  local own_package, explicit
+  local wildcards = {}
+
+  for _, match in query:iter_matches(tree:root(), bufnr, 0, -1) do
+    for id, nodes in pairs(match) do
+      local node = type(nodes) == "table" and nodes[1] or nodes
+      local text = vim.treesitter.get_node_text(node, bufnr)
+      if query.captures[id] == "package" then
+        own_package = text:match("package%s+([%w_.]+)")
+      else
+        -- A static import brings in members, never a type usable as a
+        -- generic argument: it can only mislead the lookup.
+        if not text:match("import%s+static") then
+          local wildcard = text:match("import%s+([%w_.]+)%s*%.%s*%*")
+          if wildcard then
+            wildcards[#wildcards + 1] = wildcard
+          else
+            local qualified = text:match("import%s+([%w_.]+)%s*;")
+            if qualified then
+              local package_name, simple = qualified:match("^(.*)%.([%w_]+)$")
+              if simple == type_name and package_name then
+                explicit = package_name
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local out = {}
+  local seen = {}
+  local function push(package_name)
+    if package_name and package_name ~= "" and not seen[package_name] then
+      seen[package_name] = true
+      out[#out + 1] = package_name
+    end
+  end
+
+  push(explicit)
+  push(own_package)
+  for _, wildcard in ipairs(wildcards) do
+    push(wildcard)
+  end
+  return out
+end
+
+--- URI of the symbol that genuinely declares `class_name` in one of
+--- `packages`, or nil.
+---
+--- workspace/symbol matches on the simple name alone and answers
+--- everything on the classpath: querying "Document" on a Spring Cloud
+--- project returns 79 results, the first exact match being
+--- `BootstrapConfigFileApplicationListener$Document` from a jar. Taking
+--- that first match fed completion the fields of an unrelated class —
+--- plausible, wrong, and cached.
+---
+--- The file path is the discriminator: Maven and Gradle both require a
+--- source file to sit in the directory matching its package, so a real
+--- `com.example.Document` can only live in `com/example/Document.java`.
+--- That single check rejects, in one go, homonyms from other packages,
+--- nested classes (whose file is named after the outer class) and
+--- anything coming from a jar.
+---
+--- `jdt://` documents are never accepted. jdtls happily decompiles them,
+--- treesitter happily parses the result, and the fields of a dependency's
+--- internal class flow into completion as if they were the entity's.
+--- Refusing them costs an entity shipped only as a compiled artifact —
+--- rare — and buys the guarantee that every suggested field is one the
+--- user actually declared.
+local function select_symbol(results, packages, class_name)
+  for _, package_name in ipairs(packages or {}) do
+    local suffix = "/" .. package_name:gsub("%.", "/") .. "/" .. class_name .. ".java"
+    for _, symbol in ipairs(results or {}) do
+      local uri = symbol.name == class_name and symbol.location and symbol.location.uri
+      if uri and uri:sub(1, 7) == "file://" and uri:sub(-#suffix) == suffix then
+        return uri
       end
     end
   end
@@ -343,11 +469,16 @@ end
 
 --- Walks a class and its ancestors, gathering persistable fields.
 ---
---- `resolve(class_name, callback)` maps a simple class name to a loaded
---- buffer, or nil when it can't be reached. It is injected rather than
---- hardcoded: jdtls provides it in production, a fixture map in the
---- tests, which is what makes this walk testable without a language
---- server.
+--- `resolve(class_name, packages, callback)` maps a simple class name,
+--- plus the packages it may live in, to a loaded buffer — or nil when it
+--- can't be reached. It is injected rather than hardcoded: jdtls provides
+--- it in production, a fixture map in the tests, which is what makes this
+--- walk testable without a language server.
+---
+--- `packages` is recomputed at each level from the buffer that NAMES the
+--- class: the entity's own file is what says where its `extends
+--- BaseEntity` resolves to, exactly as the repository's file says where
+--- its entity resolves to.
 ---
 --- `callback(fields, ok, visited)`:
 ---   fields  own fields first, then each ancestor's, deduplicated
@@ -356,12 +487,12 @@ end
 ---           caller must not cache it, nor build a full signature on a
 ---           list it knows to be incomplete.
 ---   visited buffer numbers that fed the list, for cache invalidation
-local function collect_fields(class_name, resolve, callback)
+local function collect_fields(class_name, packages, resolve, callback)
   local collected = {}
   local visited = {}
 
-  local function step(name, depth)
-    resolve(name, function(bufnr)
+  local function step(name, class_packages, depth)
+    resolve(name, class_packages, function(bufnr)
       if not bufnr then
         callback(merge_fields(collected), false, visited)
         return
@@ -394,11 +525,11 @@ local function collect_fields(class_name, resolve, callback)
         return
       end
 
-      step(info.superclass, depth + 1)
+      step(info.superclass, type_packages(bufnr, info.superclass), depth + 1)
     end)
   end
 
-  step(class_name, 0)
+  step(class_name, packages, 0)
 end
 
 --- Class resolver backed by jdtls: workspace/symbol locates the file,
@@ -408,7 +539,7 @@ end
 --- turns that into ok=false, which the caller reports as "incomplete" and
 --- never caches.
 local function jdtls_resolver(client)
-  return function(class_name, callback)
+  return function(class_name, packages, callback)
     local answered = false
     local function answer(bufnr)
       -- `Client:request` can both raise and answer, so this guard keeps
@@ -426,26 +557,25 @@ local function jdtls_resolver(client)
         return
       end
 
-      for _, symbol in ipairs(results) do
-        if symbol.name == class_name then
-          local uri = symbol.location and symbol.location.uri
-          if uri then
-            local uri_ok, bufnr = pcall(vim.uri_to_bufnr, uri)
-            if uri_ok and bufnr then
-              -- A `jdt://` document from a jar has no readable content:
-              -- bufload leaves the buffer empty, extract_class finds no
-              -- class, and the chain is reported incomplete.
-              local load_ok = pcall(vim.fn.bufload, bufnr)
-              if load_ok and vim.api.nvim_buf_is_loaded(bufnr) then
-                answer(bufnr)
-                return
-              end
-            end
-          end
-        end
+      local uri = select_symbol(results, packages, class_name)
+      if not uri then
+        answer(nil)
+        return
       end
 
-      answer(nil)
+      local uri_ok, bufnr = pcall(vim.uri_to_bufnr, uri)
+      if not uri_ok or not bufnr then
+        answer(nil)
+        return
+      end
+
+      local load_ok = pcall(vim.fn.bufload, bufnr)
+      if not load_ok or not vim.api.nvim_buf_is_loaded(bufnr) then
+        answer(nil)
+        return
+      end
+
+      answer(bufnr)
     end
 
     local ok, sent = pcall(client.request, client, "workspace/symbol", { query = class_name }, on_symbols)
@@ -468,17 +598,28 @@ end
 --- without this second return value, the caller would confuse "no error
 --- found" with "verified", and would offer signatures built on properties
 --- never checked against the entity.
-function M.fields(entity_name, callback)
-  if cache[entity_name] then
-    callback(cache[entity_name], true)
+function M.fields(entity_name, repo_bufnr, callback)
+  local packages = repo_bufnr and type_packages(repo_bufnr, entity_name) or {}
+  local key = cache_key(entity_name, packages)
+
+  if cache[key] then
+    callback(cache[key], true)
     return
   end
 
-  local waiters = pending[entity_name]
+  local waiters = pending[key]
   if waiters then
     -- A request is already in flight for this entity: hook onto its
     -- response instead of firing a second one.
     waiters[#waiters + 1] = callback
+    return
+  end
+
+  -- Without a package candidate every symbol jdtls returns is equally
+  -- plausible, and picking one is guessing. Answering "not established"
+  -- costs suggestions; guessing costs correctness.
+  if #packages == 0 then
+    callback({}, false)
     return
   end
 
@@ -489,7 +630,7 @@ function M.fields(entity_name, callback)
   end
 
   waiters = { callback }
-  pending[entity_name] = waiters
+  pending[key] = waiters
 
   -- `waiters` identifies this specific request: if `M.invalidate` has in
   -- the meantime unhooked `pending[entity_name]` (because jdtls crashed
@@ -508,15 +649,15 @@ function M.fields(entity_name, callback)
     end
     resolved = true
     fields = fields or {}
-    if pending[entity_name] == waiters then
-      pending[entity_name] = nil
+    if pending[key] == waiters then
+      pending[key] = nil
       if ok then
-        cache[entity_name] = fields
+        cache[key] = fields
         -- Only index buffers whose contribution was actually kept: a
         -- partial walk isn't cached, so there is nothing to invalidate.
         for _, bufnr in ipairs(visited or {}) do
           uri_index[bufnr] = uri_index[bufnr] or {}
-          uri_index[bufnr][entity_name] = true
+          uri_index[bufnr][key] = true
         end
       end
     end
@@ -525,7 +666,7 @@ function M.fields(entity_name, callback)
     end
   end
 
-  local ok, err = pcall(collect_fields, entity_name, jdtls_resolver(clients[1]), resolve)
+  local ok, err = pcall(collect_fields, entity_name, packages, jdtls_resolver(clients[1]), resolve)
   if not ok then
     -- `pending` is already set: any exit that doesn't go through
     -- `resolve` would leave this entity mute for the rest of the session,
@@ -542,10 +683,25 @@ end
 --- Also unhooks `pending`: an in-flight request that will never respond
 --- (jdtls crashed or restarted) must not block later calls indefinitely —
 --- `M.invalidate` is the recovery mechanism.
+--- True if `key` is a cache key for the entity simply named `name`.
+--- Keys are qualified ("com.example.Document"), while callers invalidate
+--- by simple name, so the match is on the last segment.
+local function key_names(key, name)
+  return key == name or key:sub(-(#name + 1)) == "." .. name
+end
+
 function M.invalidate(entity_name)
   if entity_name then
-    cache[entity_name] = nil
-    pending[entity_name] = nil
+    for key in pairs(cache) do
+      if key_names(key, entity_name) then
+        cache[key] = nil
+      end
+    end
+    for key in pairs(pending) do
+      if key_names(key, entity_name) then
+        pending[key] = nil
+      end
+    end
   else
     cache = {}
     uri_index = {}
@@ -563,12 +719,13 @@ function M.setup_autocmds()
     group = group,
     pattern = "*.java",
     callback = function(args)
-      local entities = uri_index[args.buf]
-      if not entities then
+      local keys = uri_index[args.buf]
+      if not keys then
         return
       end
-      for entity_name in pairs(entities) do
-        M.invalidate(entity_name)
+      for key in pairs(keys) do
+        cache[key] = nil
+        pending[key] = nil
       end
     end,
   })
@@ -581,6 +738,8 @@ M.internal = {
   is_persistable = is_persistable,
   merge_fields = merge_fields,
   collect_fields = collect_fields,
+  type_packages = type_packages,
+  select_symbol = select_symbol,
 }
 
 return M

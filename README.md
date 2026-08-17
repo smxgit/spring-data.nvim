@@ -130,6 +130,30 @@ It reads **loaded buffers**, not the current window: `:checkhealth` opens its
 own buffer, so keep the repository you want to diagnose open somewhere and run
 the check from anywhere.
 
+## Entity resolution
+
+`workspace/symbol` matches on the simple name alone and answers everything on
+the classpath. Querying `Document` on a Spring project returns dozens of
+results, and the first one whose name matches exactly may well be
+`BootstrapConfigFileApplicationListener$Document`, a nested class inside a
+Spring Cloud jar. jdtls decompiles it, treesitter parses it, and completion
+ends up offering the fields of a class the user never wrote.
+
+Java's own resolution rules break the tie: an unqualified type name is either
+imported explicitly, or declared in the same package, or covered by a wildcard
+import. The repository's file therefore says where its entity lives, and
+candidate packages are tried in that order.
+
+The file path is the discriminator. Maven and Gradle both require a source file
+to sit in the directory matching its package, so a real `com.example.Document`
+can only live in `com/example/Document.java`. That single check rejects
+homonyms from other packages, nested classes — whose file is named after the
+outer class — and anything coming from a jar.
+
+`jdt://` documents are never accepted, even when nothing else matches. An
+entity shipped only as a compiled artifact is therefore not supported, which
+buys the guarantee that every suggested field is one you actually declared.
+
 ## Inheritance
 
 The entity's inheritance chain is walked upwards: a field declared in a

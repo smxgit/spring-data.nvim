@@ -86,13 +86,10 @@ sources = {
 
 ## Options
 
-| Option | Default | Description |
-|---|---|---|
-| `delete_return_type` | `"void"` | Return type of `deleteBy` / `removeBy` methods. `"long"` to return the number of rows deleted. |
-| `stream_return_type` | `"List"` | Return type of `streamBy` methods. `"Stream"` to emit `Stream<T>`. |
+None. `setup{}` takes an empty table and exists to install the autocommands.
 
-These options are declared in `setup{}`. They can also be set on the blink provider,
-via its `opts` key, which then wins over `setup{}`.
+Where Spring leaves the return type open, both candidates are offered in the
+completion menu rather than fixed in configuration — see below.
 
 ## Return type
 
@@ -100,25 +97,42 @@ via its `opts` key, which then wins over `setup{}`.
 |---|---|
 | `countBy…` | `long` |
 | `existsBy…` | `boolean` |
-| `deleteBy…` / `removeBy…` | `void`, or `long` depending on the option |
-| `streamBy…` | `List<T>`, or `Stream<T>` depending on the option |
+| `deleteBy…` / `removeBy…` | `void` **and** `long`, both offered |
+| `streamBy…` | the deduced type **and** `Stream<T>`, both offered |
 | `findFirstBy…` / `findTopBy…` / `findTop1By…` | `Optional<T>` |
 | `findTop5By…` | `List<T>` |
 | Single predicate, no `Or`, equality on an `@Id` or `@Column(unique = true)` field | `Optional<T>` |
 | Every other case | `List<T>` |
 
+### When the choice is yours
+
+Two shapes leave a genuine choice open, and Spring settles neither: a delete may
+return `void` or the delete count, and a `streamBy…` may return a collection or
+a `Stream<T>`. Both candidates are offered side by side:
+
+```
+󰊕 streamByAgeGreaterThan    List<UserEntity>
+󰊕 streamByAgeGreaterThan    Stream<UserEntity>
+```
+
+They share the same label; only the inserted signature and the type shown beside
+it differ. The deduced type comes first, since it is what the method's own shape
+says.
+
+This is deliberately not a setting. The decision belongs to the call site, not
+to the project: the same repository legitimately wants a `Stream` in one method,
+consumed inside a transaction, and a plain `List` in the next.
+
 ### `streamBy` and `Stream<T>`
 
-`stream_return_type = "Stream"` makes `streamBy…` emit `Stream<UserEntity>`
-instead of `List<UserEntity>`. It is off by default, because Spring does not tie
-the keyword to the type: the appendix of query subject keywords groups
-`stream…By` with `find…By`, `read…By`, `get…By`, `query…By` and `search…By` as
-one *"general query method"*, `PartTree`'s `QUERY_PATTERN` accepts the six
-interchangeably, and the documentation's own streaming example is spelled
-`readAllByFirstnameNotNull()`. `Stream<T>` is a return type the developer
-chooses, not one the keyword imposes.
+`stream…By` does not by itself mean `Stream<T>`. The appendix of query subject
+keywords groups it with `find…By`, `read…By`, `get…By`, `query…By` and
+`search…By` as one *"general query method"*, `PartTree`'s `QUERY_PATTERN`
+accepts the six interchangeably, and the documentation's own streaming example
+is spelled `readAllByFirstnameNotNull()`. The keyword signals the intent without
+imposing the type — which is why both are offered and neither is assumed.
 
-It also comes with obligations the plugin can't write for you:
+Picking `Stream<T>` comes with obligations the plugin can't write for you:
 
 ```java
 @Transactional
@@ -134,10 +148,8 @@ Without a surrounding transaction Spring throws
 method without a surrounding transaction…`, and without the try-with-resources
 the underlying `ResultSet` leaks.
 
-The option only affects `streamBy…`; the five other query keywords keep
-returning `List<T>`. When it is on, `Stream<T>` also wins over the `Optional<T>`
-rules below — a limiting clause or a unique field makes a stream shorter, not a
-different contract.
+Only `streamBy…` gets that second candidate; the five other query keywords keep
+returning the deduced type alone.
 
 `Optional<T>` is deliberately reserved for queries whose maximum cardinality is
 guaranteed to be one. The Spring documentation is explicit: *"Expects the query

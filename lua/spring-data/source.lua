@@ -118,26 +118,51 @@ local function offers_signature(result, fields_ok)
     and #result.errors == 0
 end
 
---- Effective options: those from `require("spring-data").setup{}`,
---- overridden by those declared on the blink provider.
+--- One completion item per return type the method may carry.
 ---
---- `M.new` only receives the latter — the provider config's `opts` key —
---- almost always absent. Without this merge, an option passed to
---- `setup{}` never reached `parser.return_type`: it was written to
---- `spring-data.opts` and read by nobody.
+--- `deleteBy…` can return void or the delete count, `streamBy…` the
+--- deduced collection type or a Stream: Spring settles neither, and the
+--- answer belongs to the call site rather than to the project. Offering
+--- both side by side lets the same repository take a Stream in one method
+--- and a List in the next, which a configuration flag could never do.
 ---
---- Merged by hand rather than via `vim.tbl_extend`: this module must stay
---- loadable under a bare interpreter so its pure functions remain
---- testable without Neovim.
-local function options(provider_opts)
-  local merged = {}
-  for key, value in pairs(require("spring-data").opts or {}) do
-    merged[key] = value
+--- Every candidate carries the same label and filterText — only the
+--- inserted snippet and the description shown beside it differ. blink.cmp
+--- does not deduplicate (its docs present deduplication as a
+--- `transform_items` recipe users write themselves), so both survive
+--- filtering, and the default menu renders `labelDetails.description`
+--- next to the label, which is what tells them apart on screen.
+local function signature_items(prefix, result, entity_name)
+  local items = {}
+  for index, return_type in ipairs(parser.return_types(result, entity_name)) do
+    local rendered = {}
+    for _, param in ipairs(result.params) do
+      rendered[#rendered + 1] = param.java_type .. " " .. param.name
+    end
+
+    items[#items + 1] = {
+      label = prefix,
+      filterText = prefix,
+      labelDetails = { description = return_type },
+      kind = 2, -- Method
+      insertTextFormat = 2, -- Snippet
+      insertText = build_snippet(prefix, return_type, result.params),
+      -- Signatures sort under "00", ahead of the fragments' "01" and
+      -- "02"; the index keeps the candidates in the order the parser
+      -- ranked them.
+      sortText = string.format("00%d%s", index - 1, prefix),
+      documentation = {
+        kind = "markdown",
+        value = string.format(
+          "```java\n%s %s(%s);\n```",
+          return_type,
+          prefix,
+          table.concat(rendered, ", ")
+        ),
+      },
+    }
   end
-  for key, value in pairs(provider_opts or {}) do
-    merged[key] = value
-  end
-  return merged
+  return items
 end
 
 function M:get_completions(ctx, callback)
@@ -186,31 +211,9 @@ function M:get_completions(ctx, callback)
     -- Full signature: never before a property has been selected, so as
     -- not to reproduce Spring Tools' bare `findBy` (issue #1014).
     if offers_signature(result, fields_ok) then
-      local return_type = parser.return_type(result, entity_name, options(self.opts))
-      items[#items + 1] = {
-        label = prefix,
-        filterText = prefix,
-        labelDetails = { description = return_type },
-        kind = 2, -- Method
-        insertTextFormat = 2, -- Snippet
-        insertText = build_snippet(prefix, return_type, result.params),
-        sortText = "00" .. prefix,
-        documentation = {
-          kind = "markdown",
-          value = string.format(
-            "```java\n%s %s(%s);\n```",
-            return_type,
-            prefix,
-            (function()
-              local parts = {}
-              for _, param in ipairs(result.params) do
-                parts[#parts + 1] = param.java_type .. " " .. param.name
-              end
-              return table.concat(parts, ", ")
-            end)()
-          ),
-        },
-      }
+      for _, item in ipairs(signature_items(prefix, result, entity_name)) do
+        items[#items + 1] = item
+      end
     end
 
     callback({
@@ -235,7 +238,7 @@ M.internal = {
   fragment_text = fragment_text,
   build_snippet = build_snippet,
   offers_signature = offers_signature,
-  options = options,
+  signature_items = signature_items,
 }
 
 return M

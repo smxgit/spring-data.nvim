@@ -169,41 +169,53 @@ t.describe("source › offers_signature", function()
   end)
 end)
 
-t.describe("source › options", function()
-  local function with_setup_opts(opts, fn)
-    local previous = spring_data.opts
-    spring_data.opts = opts
-    local ok, err = pcall(fn)
-    spring_data.opts = previous
-    if not ok then
-      error(err, 0)
-    end
+-- One signature item per candidate return type. The choice belongs to the
+-- call site, not to the project: the same repository legitimately wants a
+-- Stream in one method and a List in the next.
+t.describe("source › signature items", function()
+  local function items_for(source)
+    local result = parser.parse(source, FIELDS)
+    return internal.signature_items(source, result, "UserEntity")
   end
 
-  t.it("picks up setup's options", function()
-    with_setup_opts({ delete_return_type = "long" }, function()
-      t.eq(internal.options({}).delete_return_type, "long")
-      t.eq(internal.options(nil).delete_return_type, "long")
-    end)
+  t.it("emits one item per candidate", function()
+    local items = items_for("streamByName")
+    t.eq(#items, 2)
+    t.eq(items[1].labelDetails.description, "List<UserEntity>")
+    t.eq(items[2].labelDetails.description, "Stream<UserEntity>")
   end)
 
-  t.it("lets the provider have the last word", function()
-    with_setup_opts({ delete_return_type = "long" }, function()
-      t.eq(internal.options({ delete_return_type = "void" }).delete_return_type, "void")
-    end)
+  t.it("gives every candidate the same label, so both survive filtering", function()
+    local items = items_for("streamByName")
+    t.eq(items[1].label, "streamByName")
+    t.eq(items[2].label, "streamByName")
+    t.eq(items[1].filterText, items[2].filterText)
   end)
 
-  -- The documented default used to be a no-op: it was written to
-  -- spring-data.opts and read by nobody, `self.opts` coming from the
-  -- provider.
-  t.it("routes the option through to the return type", function()
-    with_setup_opts({ delete_return_type = "long" }, function()
-      local result = parser.parse("deleteByName", FIELDS)
-      t.eq(parser.return_type(result, "UserEntity", internal.options({})), "long")
-    end)
-    with_setup_opts({ delete_return_type = "void" }, function()
-      local result = parser.parse("deleteByName", FIELDS)
-      t.eq(parser.return_type(result, "UserEntity", internal.options({})), "void")
-    end)
+  t.it("carries the candidate's own type into its snippet", function()
+    local items = items_for("streamByName")
+    t.eq(items[1].insertText, "List<UserEntity> streamByName(String ${1:name});$0")
+    t.eq(items[2].insertText, "Stream<UserEntity> streamByName(String ${1:name});$0")
+  end)
+
+  t.it("keeps the candidates in order, ahead of the fragments", function()
+    local items = items_for("streamByName")
+    t.eq(items[1].sortText, "000streamByName")
+    t.eq(items[2].sortText, "001streamByName")
+    -- fragments sort under "01" (properties) and "02" (keywords)
+    t.truthy(items[2].sortText < "01", "a signature must outrank every fragment")
+  end)
+
+  t.it("offers void and long for a delete", function()
+    local items = items_for("deleteByName")
+    t.eq(#items, 2)
+    t.eq(items[1].labelDetails.description, "void")
+    t.eq(items[2].labelDetails.description, "long")
+  end)
+
+  t.it("emits a single item where nothing is open to choice", function()
+    t.eq(#items_for("findByName"), 1)
+    t.eq(#items_for("countByName"), 1)
+    t.eq(#items_for("existsByName"), 1)
   end)
 end)

@@ -613,7 +613,7 @@ local function is_unique_field(field)
   return false
 end
 
---- Deduces the method's return type.
+--- The single return type deduced from the method's shape.
 ---
 --- Optional<T> is reserved for queries whose maximum cardinality is
 --- guaranteed to be one. The official return-type table is explicit:
@@ -621,23 +621,8 @@ end
 --- result triggers an IncorrectResultSizeDataAccessException." The
 --- "no result" case is already covered by List<T>, which returns an empty
 --- list and never null.
-function M.return_type(result, entity_name, opts)
-  opts = opts or {}
+local function deduced_type(result, entity_name)
   local subject = result.subject
-
-  if not subject then
-    return "List<" .. entity_name .. ">"
-  end
-
-  if subject.category == "count" then
-    return "long"
-  end
-  if subject.category == "exists" then
-    return "boolean"
-  end
-  if subject.category == "delete" then
-    return opts.delete_return_type == "long" and "long" or "void"
-  end
 
   if subject.max_results == 1 then
     return "Optional<" .. entity_name .. ">"
@@ -654,6 +639,56 @@ function M.return_type(result, entity_name, opts)
   end
 
   return "List<" .. entity_name .. ">"
+end
+
+--- Every return type the method may legitimately carry, best first.
+---
+--- Two shapes leave a genuine choice open, and Spring settles neither:
+---
+---   deleteBy / removeBy   void or the delete count, both documented as
+---                         "returning either no result (void) or the
+---                         delete count".
+---   streamBy              the deduced type or Stream<T>. `stream` is one
+---                         of six interchangeable general query keywords
+---                         — PartTree's QUERY_PATTERN accepts them
+---                         indifferently and the documentation's own
+---                         streaming example is spelled
+---                         readAllByFirstnameNotNull() — so the keyword
+---                         suggests the intent without imposing the type.
+---
+--- Both are offered side by side rather than fixed in configuration: the
+--- decision belongs to the call site, not to the project. The same
+--- repository legitimately wants a Stream in one method, consumed inside
+--- a transaction, and a plain List in the next.
+---
+--- The deduced type stays first: it is what the method's own shape says.
+function M.return_types(result, entity_name)
+  local subject = result.subject
+
+  if not subject then
+    return { "List<" .. entity_name .. ">" }
+  end
+
+  if subject.category == "count" then
+    return { "long" }
+  end
+  if subject.category == "exists" then
+    return { "boolean" }
+  end
+  if subject.category == "delete" then
+    return { "void", "long" }
+  end
+
+  local deduced = deduced_type(result, entity_name)
+  if subject.introducer == "stream" then
+    return { deduced, "Stream<" .. entity_name .. ">" }
+  end
+  return { deduced }
+end
+
+--- The most likely return type: the first candidate.
+function M.return_type(result, entity_name)
+  return M.return_types(result, entity_name)[1]
 end
 
 --- True if `typed` is a prefix of `label`, aside from the case of the

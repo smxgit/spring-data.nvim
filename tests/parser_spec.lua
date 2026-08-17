@@ -585,10 +585,53 @@ t.describe("parser › terminal states", function()
   end)
 end)
 
-t.describe("parser › return_type", function()
-  local function rt(source, opts)
-    return parser.return_type(parser.parse(source, FIELDS), "UserEntity", opts)
+t.describe("parser › return_types", function()
+  local function rts(source)
+    return parser.return_types(parser.parse(source, FIELDS), "UserEntity")
   end
+
+  t.it("offers void then long for a delete", function()
+    t.eq(rts("deleteByName"), { "void", "long" })
+    t.eq(rts("removeByName"), { "void", "long" })
+  end)
+
+  t.it("offers the deduced type then Stream for a stream", function()
+    t.eq(rts("streamByName"), { "List<UserEntity>", "Stream<UserEntity>" })
+  end)
+
+  t.it("keeps the deduced type first even when it is Optional", function()
+    -- A stream of at most one row is legitimate, and so is asking for
+    -- that row directly: both are offered, neither is imposed.
+    t.eq(rts("streamById"), { "Optional<UserEntity>", "Stream<UserEntity>" })
+    t.eq(rts("streamTop5ByName"), { "List<UserEntity>", "Stream<UserEntity>" })
+  end)
+
+  t.it("never offers Stream to the five other query keywords", function()
+    for _, source in ipairs({ "findByName", "readByName", "getByName", "queryByName", "searchByName" }) do
+      t.eq(rts(source), { "List<UserEntity>" })
+    end
+  end)
+
+  t.it("never offers Stream to count or exists", function()
+    t.eq(rts("countByName"), { "long" })
+    t.eq(rts("existsByName"), { "boolean" })
+  end)
+
+  t.it("offers a single type when nothing is open to choice", function()
+    t.eq(rts("findByName"), { "List<UserEntity>" })
+    t.eq(rts("findById"), { "Optional<UserEntity>" })
+  end)
+end)
+
+t.describe("parser › return_type", function()
+  local function rt(source)
+    return parser.return_type(parser.parse(source, FIELDS), "UserEntity")
+  end
+
+  t.it("answers the first candidate", function()
+    t.eq(rt("streamByName"), "List<UserEntity>")
+    t.eq(rt("deleteByName"), "void")
+  end)
 
   t.it("gives long for count", function()
     t.eq(rt("countByName"), "long")
@@ -598,13 +641,16 @@ t.describe("parser › return_type", function()
     t.eq(rt("existsByName"), "boolean")
   end)
 
-  t.it("gives void for delete by default", function()
+  t.it("leads with void for delete", function()
     t.eq(rt("deleteByName"), "void")
     t.eq(rt("removeByName"), "void")
   end)
 
-  t.it("gives long for delete when the option asks for it", function()
-    t.eq(rt("deleteByName", { delete_return_type = "long" }), "long")
+  t.it("leads with List for stream", function()
+    -- `stream` is one of the six general query keywords, strictly
+    -- equivalent to `find` in PartTree: nothing in Spring makes it return
+    -- a Stream on its own, so the deduced type stays first.
+    t.eq(rt("streamByName"), "List<UserEntity>")
   end)
 
   t.it("gives Optional for First and Top without a number", function()
